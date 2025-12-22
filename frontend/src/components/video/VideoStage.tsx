@@ -2,17 +2,30 @@ import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { useNexusStore } from '@/store/useNexusStore'
 import { useTheme } from '@/hooks/useTheme'
 
-// Múltiplos servidores STUN/TURN para máxima conectividade
+// Servidores ICE - STUN para descoberta, TURN para relay
 const ICE_SERVERS: RTCIceServer[] = [
+  // STUN servers (descoberta de IP público)
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun3.l.google.com:19302' },
-  { urls: 'stun:stun4.l.google.com:19302' },
-  { urls: 'stun:stun.stunprotocol.org:3478' },
-  // TURN servers (relay para NAT restritivo)
-  { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+  // TURN servers (relay - ESSENCIAL para NAT restritivo)
+  // Metered.ca - serviço gratuito confiável
+  {
+    urls: ['turn:a.relay.metered.ca:80', 'turn:a.relay.metered.ca:80?transport=tcp'],
+    username: 'e8dd65c92f6f1f2d5c67c7a3',
+    credential: 'kW3QfUZKpLqYhDzS'
+  },
+  {
+    urls: ['turn:a.relay.metered.ca:443', 'turn:a.relay.metered.ca:443?transport=tcp'],
+    username: 'e8dd65c92f6f1f2d5c67c7a3',
+    credential: 'kW3QfUZKpLqYhDzS'
+  },
+  {
+    urls: 'turns:a.relay.metered.ca:443?transport=tcp',
+    username: 'e8dd65c92f6f1f2d5c67c7a3',
+    credential: 'kW3QfUZKpLqYhDzS'
+  },
+  // OpenRelay backup
   { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
 ]
 
@@ -28,7 +41,7 @@ interface VideoStageProps {
 export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   const { status, partnerInfo } = useNexusStore()
   const { theme } = useTheme()
-  
+
   // Refs
   const localVideoRef = useRef<HTMLVideoElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
@@ -41,7 +54,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   const reconnectAttempts = useRef(0)
   const statsInterval = useRef<NodeJS.Timeout | null>(null)
   const connectionTimeout = useRef<NodeJS.Timeout | null>(null)
-  
+
   // State
   const [cameraOn, setCameraOn] = useState(true)
   const [micOn, setMicOn] = useState(true)
@@ -55,7 +68,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
 
 
   const bgStyle = { background: theme === 'dark' ? '#0a0a0a' : '#f1f5f9' }
-  
+
   // Determinar se somos "polite" (responder) ou "impolite" (iniciador)
   // Perfect Negotiation: polite peer cede em caso de conflito
   const isPolite = useCallback(() => !(window as any).__isWebRTCInitiator, [])
@@ -96,20 +109,20 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
     try {
       // Se já tem stream, retorna
       if (localStreamRef.current) return localStreamRef.current
-      
+
       console.log('📹 Requesting media...', videoEnabled ? 'video+audio' : 'audio only')
-      const constraints = videoEnabled 
+      const constraints = videoEnabled
         ? { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, audio: { echoCancellation: true, noiseSuppression: true } }
         : { video: false, audio: { echoCancellation: true, noiseSuppression: true } }
-      
+
       const stream = await navigator.mediaDevices.getUserMedia(constraints)
       localStreamRef.current = stream
-      
+
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream
-        localVideoRef.current.play().catch(() => {})
+        localVideoRef.current.play().catch(() => { })
       }
-      
+
       setCameraOn(videoEnabled && stream.getVideoTracks().length > 0)
       setMicOn(stream.getAudioTracks().length > 0)
       setError(null)
@@ -141,39 +154,42 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
       pcRef.current.close()
       pcRef.current = null
     }
-    
+
     console.log('🔗 Creating PeerConnection (polite:', isPolite(), ')')
-    const pc = new RTCPeerConnection({ 
-      iceServers: ICE_SERVERS, 
+    const pc = new RTCPeerConnection({
+      iceServers: ICE_SERVERS,
       iceCandidatePoolSize: 10,
       bundlePolicy: 'max-bundle',
-      rtcpMuxPolicy: 'require'
+      rtcpMuxPolicy: 'require',
+      iceTransportPolicy: 'all' // Permite STUN e TURN
     })
-    
-    // ICE Candidate
+
+    // ICE Candidate - log mais detalhado
     pc.onicecandidate = ({ candidate }) => {
       if (candidate && sendSignal) {
-        console.log('🧊 Sending ICE candidate')
+        const type = candidate.candidate.includes('relay') ? 'TURN' :
+          candidate.candidate.includes('srflx') ? 'STUN' : 'HOST'
+        console.log(`🧊 Sending ICE candidate (${type})`)
         sendSignal('webrtc_ice', { candidate: candidate.toJSON() })
       }
     }
-    
-    pc.onicecandidateerror = (e) => {
-      console.warn('🧊 ICE candidate error:', e)
+
+    pc.onicecandidateerror = (e: any) => {
+      console.warn('🧊 ICE candidate error:', e.errorCode, e.errorText)
     }
-    
+
     // Track recebido
     pc.ontrack = ({ track, streams }) => {
       console.log('📺 Received track:', track.kind)
       if (remoteVideoRef.current && streams[0]) {
         remoteVideoRef.current.srcObject = streams[0]
-        remoteVideoRef.current.play().catch(() => {})
+        remoteVideoRef.current.play().catch(() => { })
         setRemoteConnected(true)
         reconnectAttempts.current = 0
         startQualityMonitor()
       }
     }
-    
+
     // Perfect Negotiation: onnegotiationneeded
     pc.onnegotiationneeded = async () => {
       try {
@@ -188,12 +204,12 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
         makingOffer.current = false
       }
     }
-    
+
     // Connection state
     pc.onconnectionstatechange = () => {
       console.log('🔄 Connection state:', pc.connectionState)
       setConnectionState(pc.connectionState)
-      
+
       if (pc.connectionState === 'connected') {
         setRemoteConnected(true)
         setQuality('good')
@@ -202,24 +218,33 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
           connectionTimeout.current = null
         }
       }
-      
+
       if (pc.connectionState === 'disconnected') {
         setQuality('poor')
-        // Aguardar 5s antes de tentar reconectar
+        // Tentar ICE restart primeiro
+        console.log('🔄 Connection disconnected, trying ICE restart...')
+        pc.restartIce()
         setTimeout(() => {
           if (pcRef.current?.connectionState === 'disconnected') {
             attemptReconnect()
           }
         }, 5000)
       }
-      
+
       if (pc.connectionState === 'failed') {
         setRemoteConnected(false)
         setQuality('disconnected')
-        attemptReconnect()
+        // Tentar ICE restart antes de reconexão completa
+        console.log('🔄 Connection failed, trying ICE restart...')
+        pc.restartIce()
+        setTimeout(() => {
+          if (pcRef.current?.connectionState === 'failed') {
+            attemptReconnect()
+          }
+        }, 3000)
       }
     }
-    
+
     // ICE connection state
     pc.oniceconnectionstatechange = () => {
       console.log('🧊 ICE state:', pc.iceConnectionState)
@@ -227,12 +252,20 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
         console.log('🔄 ICE failed, restarting...')
         pc.restartIce()
       }
+      if (pc.iceConnectionState === 'disconnected') {
+        setTimeout(() => {
+          if (pc.iceConnectionState === 'disconnected') {
+            console.log('🔄 ICE still disconnected, restarting...')
+            pc.restartIce()
+          }
+        }, 3000)
+      }
     }
-    
+
     pc.onicegatheringstatechange = () => {
       console.log('🧊 ICE gathering:', pc.iceGatheringState)
     }
-    
+
     pcRef.current = pc
     return pc
   }, [sendSignal, isPolite, startQualityMonitor])
@@ -246,20 +279,20 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
       setIsReconnecting(false)
       return
     }
-    
+
     reconnectAttempts.current++
     setIsReconnecting(true)
     console.log(`🔄 Reconnecting... attempt ${reconnectAttempts.current}/3`)
-    
+
     // Fechar conexão atual
     pcRef.current?.close()
     pcRef.current = null
     pendingCandidates.current = []
     makingOffer.current = false
     ignoreOffer.current = false
-    
+
     await new Promise(r => setTimeout(r, 1000))
-    
+
     // Reiniciar
     await initializeConnection()
     setIsReconnecting(false)
@@ -269,18 +302,18 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   const initializeConnection = useCallback(async () => {
     const isInitiator = (window as any).__isWebRTCInitiator
     console.log('🚀 Initializing connection... (initiator:', isInitiator, ')')
-    
+
     const stream = await startMedia()
     if (!stream) return
-    
+
     const pc = createPeerConnection()
-    
+
     // Adicionar tracks
     stream.getTracks().forEach(track => {
       console.log('➕ Adding track:', track.kind)
       pc.addTrack(track, stream)
     })
-    
+
     // Processar ICE candidates pendentes
     while (pendingCandidates.current.length > 0) {
       const candidate = pendingCandidates.current.shift()
@@ -290,7 +323,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
         } catch { /* ignore */ }
       }
     }
-    
+
     // INITIATOR: criar offer explicitamente após um delay
     // (fallback caso onnegotiationneeded não dispare)
     if (isInitiator) {
@@ -311,7 +344,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
         }
       }, 1000)
     }
-    
+
     // Timeout de conexão
     connectionTimeout.current = setTimeout(() => {
       if (pcRef.current?.connectionState !== 'connected') {
@@ -331,25 +364,25 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
       setTimeout(() => handleOffer(sdp), 500)
       return
     }
-    
+
     try {
       const offerCollision = makingOffer.current || pc.signalingState !== 'stable'
       ignoreOffer.current = !isPolite() && offerCollision
-      
+
       if (ignoreOffer.current) {
         console.log('⚠️ Ignoring offer (collision, impolite)')
         return
       }
-      
+
       console.log('📥 Processing offer...')
       await pc.setRemoteDescription(new RTCSessionDescription(sdp))
-      
+
       // Processar ICE candidates pendentes
       while (pendingCandidates.current.length > 0) {
         const candidate = pendingCandidates.current.shift()
-        if (candidate) await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {})
+        if (candidate) await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => { })
       }
-      
+
       const answer = await pc.createAnswer()
       await pc.setLocalDescription(answer)
       console.log('📤 Sending answer')
@@ -363,22 +396,22 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   const handleAnswer = useCallback(async (sdp: RTCSessionDescriptionInit) => {
     const pc = pcRef.current
     if (!pc) return
-    
+
     try {
       if (pc.signalingState === 'stable') {
         console.log('⚠️ Ignoring answer (already stable)')
         return
       }
-      
+
       console.log('📥 Processing answer...')
       isSettingRemoteAnswer.current = true
       await pc.setRemoteDescription(new RTCSessionDescription(sdp))
       isSettingRemoteAnswer.current = false
-      
+
       // Processar ICE candidates pendentes
       while (pendingCandidates.current.length > 0) {
         const candidate = pendingCandidates.current.shift()
-        if (candidate) await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {})
+        if (candidate) await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => { })
       }
     } catch (err) {
       console.error('❌ Handle answer error:', err)
@@ -394,7 +427,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
       pendingCandidates.current.push(candidate)
       return
     }
-    
+
     try {
       console.log('🧊 Adding ICE candidate')
       await pc.addIceCandidate(new RTCIceCandidate(candidate))
@@ -542,34 +575,49 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
             </div>
           )}
 
-          {/* Split 50/50 */}
+          {/* Layout Split 50/50 optimized for Mobile and Side-by-Side for Desktop */}
           {viewMode === 'split' && (
-            <div className="h-full w-full flex flex-col md:flex-row">
-              <div className="flex-1 relative bg-black min-h-[40%] md:min-h-0">
-                <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
+            <div className="h-full w-full flex flex-col md:flex-row bg-black">
+              {/* Remote Video - Top half on mobile, Left half on desktop */}
+              <div className="flex-1 relative min-h-[50%] md:min-h-0 border-b md:border-b-0 md:border-r border-white/10 group overflow-hidden">
+                <video
+                  ref={remoteVideoRef}
+                  autoPlay
+                  playsInline
+                  className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                />
                 {!remoteConnected && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-gray-900 to-black">
-                    <div className="text-center">
-                      <div className="w-20 h-20 mx-auto mb-3 rounded-full bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center">
-                        <span className="text-2xl font-bold text-white">{partnerInfo?.anonymousId?.slice(0, 2)}</span>
+                  <div className="absolute inset-0 flex items-center justify-center bg-gray-900/90 backdrop-blur-md">
+                    <div className="text-center animate-pulse">
+                      <div className="w-24 h-24 mx-auto mb-4 rounded-full bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center shadow-2xl">
+                        <span className="text-3xl font-bold text-white">{partnerInfo?.anonymousId?.slice(0, 2) || '?'}</span>
                       </div>
-                      <p className="text-white font-medium">{partnerInfo?.anonymousId}</p>
-                      <p className="text-gray-400 text-xs mt-1">{connectionState === 'connecting' ? 'Conectando vídeo...' : 'Aguardando...'}</p>
+                      <p className="text-white font-bold text-lg">{partnerInfo?.anonymousId || 'Conectando...'}</p>
+                      <p className="text-cyan-400 text-xs mt-2 uppercase tracking-widest font-black">Aguardando Parceria</p>
                     </div>
                   </div>
                 )}
-                <div className="absolute top-3 left-3 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm flex items-center gap-2">
-                  <span className={`w-2 h-2 rounded-full ${remoteConnected ? 'bg-green-500' : 'bg-yellow-500'} animate-pulse`} />
-                  <span className="text-white text-sm font-medium">{partnerInfo?.anonymousId}</span>
+                <div className="absolute top-4 left-4 px-4 py-2 rounded-2xl bg-black/40 backdrop-blur-md border border-white/10 flex items-center gap-2">
+                  <div className={`w-2.5 h-2.5 rounded-full ${remoteConnected ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.8)]' : 'bg-yellow-500 animate-ping'}`} />
+                  <span className="text-white text-xs font-black uppercase tracking-tighter">
+                    {partnerInfo?.anonymousId || 'Visitante'}
+                  </span>
                 </div>
               </div>
-              <div className="hidden md:block w-1 bg-black" />
-              <div className="md:hidden h-1 bg-black" />
-              <div className="flex-1 relative bg-black min-h-[40%] md:min-h-0">
-                <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" style={{ transform: 'scaleX(-1)' }} />
-                <div className="absolute top-3 left-3 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse" />
-                  <span className="text-white text-sm font-medium">Você</span>
+
+              {/* Local Video - Bottom half on mobile, Right half on desktop */}
+              <div className="flex-1 relative min-h-[50%] md:min-h-0 group overflow-hidden">
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                  style={{ transform: 'scaleX(-1)' }}
+                />
+                <div className="absolute top-4 left-4 px-4 py-2 rounded-2xl bg-black/40 backdrop-blur-md border border-white/10 flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.8)] animate-pulse" />
+                  <span className="text-white text-xs font-black uppercase tracking-tighter">Você (Preview)</span>
                 </div>
               </div>
             </div>
@@ -637,9 +685,9 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
                   </svg>
                 </button>
-                <button onClick={onNext} className="px-5 md:px-6 py-3 md:py-4 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white rounded-full font-semibold text-sm md:text-base transition-all shadow-lg flex items-center gap-2">
-                  <span>Próximo</span>
-                  <svg className="w-4 h-4 md:w-5 md:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <button onClick={onNext} className="h-12 md:h-14 px-6 md:px-8 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white rounded-full font-bold text-sm md:text-base transition-all shadow-lg hover:shadow-blue-500/40 active:scale-95 flex items-center gap-2">
+                  <span>PRÓXIMO</span>
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
                   </svg>
                 </button>

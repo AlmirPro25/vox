@@ -140,16 +140,32 @@ export function TranslationPanel({ onSendMessage, onTyping }: Props) {
         {messages.map((msg) => {
           const isMe = msg.senderId === user?.anonymousId
           return (
-            <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-              <div className="max-w-[80%]">
-                {!isMe && <p className="text-[10px] mb-1 ml-2 font-medium" style={{ color: isDark ? '#666' : '#888' }}>{msg.senderId}</p>}
-                <div className={`rounded-2xl px-4 py-2.5 ${isMe ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white rounded-br-sm' : 'rounded-bl-sm'}`}
-                  style={!isMe ? { background: isDark ? '#1a1a1a' : '#f0f0f0', color: isDark ? '#fff' : '#111' } : {}}>
-                  <p className="text-sm leading-relaxed">{msg.originalText}</p>
+            <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
+              <div className={`max-w-[85%] ${isMe ? 'items-end' : 'items-start'} flex flex-col`}>
+                {!isMe && (
+                  <span className="text-[10px] font-black text-cyan-500 mb-1 ml-1 uppercase tracking-tighter">
+                    {msg.senderId}
+                  </span>
+                )}
+                <div className={`
+                  px-4 py-3 rounded-2xl shadow-sm text-sm leading-relaxed
+                  ${isMe
+                    ? 'bg-gradient-to-br from-cyan-500 to-blue-600 text-white rounded-br-none shadow-cyan-500/20'
+                    : `${isDark ? 'bg-[#1a1a1a] text-white border border-white/5' : 'bg-gray-100 text-gray-800'} rounded-bl-none`
+                  }
+                `}>
+                  <p>{msg.originalText}</p>
                 </div>
-                <p className={`text-[10px] mt-1 ${isMe ? 'text-right mr-2' : 'ml-2'}`} style={{ color: isDark ? '#555' : '#999' }}>
-                  {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </p>
+                <div className="flex items-center gap-1.5 mt-1.5 px-1">
+                  <span className={`text-[9px] font-medium uppercase ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                  {isMe && (
+                    <svg className="w-3 h-3 text-cyan-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                </div>
               </div>
             </div>
           )
@@ -172,20 +188,30 @@ export function TranslationPanel({ onSendMessage, onTyping }: Props) {
       {/* Input - fixed at bottom */}
       {status === 'connected' && (
         <div className="shrink-0 p-4 border-t" style={{ borderColor: isDark ? '#222' : '#eee' }}>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={input}
-              onChange={handleInputChange}
-              onKeyPress={handleKeyPress}
-              placeholder="Mensagem..."
-              className="flex-1 px-4 py-3 rounded-xl text-sm outline-none"
-              style={{ background: isDark ? '#1a1a1a' : '#f5f5f5', color: isDark ? '#fff' : '#111', border: `1px solid ${isDark ? '#333' : '#ddd'}` }}
-            />
-            <button onClick={handleSend} disabled={!input.trim()}
-              className="px-4 py-3 bg-gradient-to-r from-cyan-500 to-blue-500 text-white rounded-xl disabled:opacity-30 transition-all active:scale-95">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+          <div className="flex items-center gap-2 bg-transparent">
+            <div className="flex-1 relative group">
+              <input
+                type="text"
+                value={input}
+                onChange={handleInputChange}
+                onKeyPress={handleKeyPress}
+                placeholder="Escreva sua mensagem..."
+                className={`
+                  w-full px-5 py-3.5 rounded-2xl text-sm outline-none transition-all
+                  ${isDark
+                    ? 'bg-[#161616] text-white border border-white/5 focus:border-cyan-500/50 focus:ring-4 focus:ring-cyan-500/10'
+                    : 'bg-gray-50 text-gray-900 border border-gray-200 focus:border-cyan-500/50 focus:ring-4 focus:ring-cyan-500/5'
+                  }
+                `}
+              />
+            </div>
+            <button
+              onClick={handleSend}
+              disabled={!input.trim()}
+              className="group h-[48px] w-[48px] flex items-center justify-center bg-gradient-to-br from-cyan-500 to-blue-600 text-white rounded-2xl shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/40 disabled:opacity-30 transition-all active:scale-90"
+            >
+              <svg className="w-5 h-5 transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
               </svg>
             </button>
           </div>
