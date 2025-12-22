@@ -6,23 +6,21 @@ const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun3.l.google.com:19302' },
-  { urls: 'stun:stun4.l.google.com:19302' },
-  // TURN servers gratuitos (OpenRelay)
+  // TURN servers gratuitos (Metered)
   {
-    urls: 'turn:openrelay.metered.ca:80',
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
+    urls: 'turn:a.relay.metered.ca:80',
+    username: 'e8dd65c92f6f1f2d5c67c7a3',
+    credential: 'kW3QfUZKpLqYhDzS'
   },
   {
-    urls: 'turn:openrelay.metered.ca:443',
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
+    urls: 'turn:a.relay.metered.ca:443',
+    username: 'e8dd65c92f6f1f2d5c67c7a3',
+    credential: 'kW3QfUZKpLqYhDzS'
   },
   {
-    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
+    urls: 'turn:a.relay.metered.ca:443?transport=tcp',
+    username: 'e8dd65c92f6f1f2d5c67c7a3',
+    credential: 'kW3QfUZKpLqYhDzS'
   },
 ]
 
@@ -40,6 +38,8 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
+  const pendingIceCandidates = useRef<RTCIceCandidateInit[]>([])
+  const isNegotiating = useRef(false)
   
   const [cameraOn, setCameraOn] = useState(false)
   const [micOn, setMicOn] = useState(false)
@@ -84,21 +84,33 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
 
   // Criar peer connection
   const createPC = useCallback(() => {
+    // Limpar PC anterior se existir
+    if (pcRef.current) {
+      pcRef.current.close()
+      pcRef.current = null
+    }
+    
     console.log('🔗 Creating PeerConnection...')
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
     
     pc.onicecandidate = (e) => {
       if (e.candidate && sendSignal) {
         console.log('🧊 Sending ICE candidate')
-        sendSignal('webrtc_ice', { candidate: e.candidate })
+        sendSignal('webrtc_ice', { candidate: e.candidate.toJSON() })
       }
     }
     
     pc.ontrack = (e) => {
-      console.log('📺 Received remote track!', e.streams)
+      console.log('📺 Received remote track!', e.track.kind)
       if (remoteVideoRef.current && e.streams[0]) {
-        remoteVideoRef.current.srcObject = e.streams[0]
-        remoteVideoRef.current.play().catch(console.error)
+        // Evitar setar o mesmo stream
+        if (remoteVideoRef.current.srcObject !== e.streams[0]) {
+          remoteVideoRef.current.srcObject = e.streams[0]
+        }
+        // Usar evento loadedmetadata pra dar play
+        remoteVideoRef.current.onloadedmetadata = () => {
+          remoteVideoRef.current?.play().catch(err => console.log('Play error:', err))
+        }
         setRemoteConnected(true)
       }
     }
@@ -106,81 +118,172 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
     pc.onconnectionstatechange = () => {
       console.log('🔄 Connection state:', pc.connectionState)
       setConnectionState(pc.connectionState)
-      if (pc.connectionState === 'connected') setRemoteConnected(true)
-      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') setRemoteConnected(false)
+      if (pc.connectionState === 'connected') {
+        setRemoteConnected(true)
+        isNegotiating.current = false
+      }
+      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+        setRemoteConnected(false)
+      }
     }
 
-    pc.oniceconnectionstatechange = () => console.log('🧊 ICE state:', pc.iceConnectionState)
+    pc.oniceconnectionstatechange = () => {
+      console.log('🧊 ICE state:', pc.iceConnectionState)
+      // Se ICE falhar, tentar reconectar
+      if (pc.iceConnectionState === 'failed') {
+        console.log('🔄 ICE failed, restarting...')
+        pc.restartIce()
+      }
+    }
+
+    pc.onsignalingstatechange = () => {
+      console.log('📡 Signaling state:', pc.signalingState)
+      isNegotiating.current = pc.signalingState !== 'stable'
+    }
     
+    pcRef.current = pc
     return pc
   }, [sendSignal])
 
   // Iniciar chamada (initiator)
   const startCall = useCallback(async () => {
+    if (isNegotiating.current) {
+      console.log('⚠️ Already negotiating, skipping...')
+      return
+    }
+    isNegotiating.current = true
+    
     console.log('📞 Starting call as initiator...')
     const stream = await startMedia()
-    if (!stream || !sendSignal) return
+    if (!stream || !sendSignal) {
+      isNegotiating.current = false
+      return
+    }
     
     const pc = createPC()
-    pcRef.current = pc
     stream.getTracks().forEach(t => {
       console.log('➕ Adding track:', t.kind)
       pc.addTrack(t, stream)
     })
     
-    const offer = await pc.createOffer()
-    await pc.setLocalDescription(offer)
-    console.log('📤 Sending offer...')
-    sendSignal('webrtc_offer', { sdp: offer })
+    try {
+      const offer = await pc.createOffer()
+      await pc.setLocalDescription(offer)
+      console.log('📤 Sending offer...')
+      sendSignal('webrtc_offer', { sdp: pc.localDescription?.toJSON() })
+    } catch (err) {
+      console.error('❌ Error creating offer:', err)
+      isNegotiating.current = false
+    }
   }, [createPC, startMedia, sendSignal])
 
   // Receber offer (responder)
   const handleOffer = useCallback(async (sdp: RTCSessionDescriptionInit) => {
     console.log('📥 Received offer, creating answer...')
-    let stream = localStreamRef.current
-    if (!stream) stream = await startMedia()
-    if (!stream || !sendSignal) return
     
-    // Fechar PC anterior se existir
-    pcRef.current?.close()
+    // Garantir que temos mídia local
+    let stream = localStreamRef.current
+    if (!stream) {
+      stream = await startMedia()
+    }
+    if (!stream || !sendSignal) {
+      console.error('❌ No local stream available')
+      return
+    }
     
     const pc = createPC()
-    pcRef.current = pc
-    stream.getTracks().forEach(t => pc.addTrack(t, stream!))
+    stream.getTracks().forEach(t => {
+      console.log('➕ Adding track to answer:', t.kind)
+      pc.addTrack(t, stream!)
+    })
     
-    await pc.setRemoteDescription(new RTCSessionDescription(sdp))
-    const answer = await pc.createAnswer()
-    await pc.setLocalDescription(answer)
-    console.log('📤 Sending answer...')
-    sendSignal('webrtc_answer', { sdp: answer })
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription(sdp))
+      
+      // Processar ICE candidates pendentes
+      while (pendingIceCandidates.current.length > 0) {
+        const candidate = pendingIceCandidates.current.shift()
+        if (candidate) {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate))
+          console.log('🧊 Added pending ICE candidate')
+        }
+      }
+      
+      const answer = await pc.createAnswer()
+      await pc.setLocalDescription(answer)
+      console.log('📤 Sending answer...')
+      sendSignal('webrtc_answer', { sdp: pc.localDescription?.toJSON() })
+    } catch (err) {
+      console.error('❌ Error handling offer:', err)
+    }
   }, [createPC, startMedia, sendSignal])
 
   // Receber answer
   const handleAnswer = useCallback(async (sdp: RTCSessionDescriptionInit) => {
     console.log('📥 Received answer')
-    if (pcRef.current && pcRef.current.signalingState === 'have-local-offer') {
-      await pcRef.current.setRemoteDescription(new RTCSessionDescription(sdp))
+    const pc = pcRef.current
+    if (!pc) {
+      console.error('❌ No PeerConnection for answer')
+      return
+    }
+    
+    if (pc.signalingState !== 'have-local-offer') {
+      console.log('⚠️ Wrong signaling state for answer:', pc.signalingState)
+      return
+    }
+    
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription(sdp))
+      console.log('✅ Remote description set')
+      
+      // Processar ICE candidates pendentes
+      while (pendingIceCandidates.current.length > 0) {
+        const candidate = pendingIceCandidates.current.shift()
+        if (candidate) {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate))
+          console.log('🧊 Added pending ICE candidate')
+        }
+      }
+    } catch (err) {
+      console.error('❌ Error setting remote description:', err)
     }
   }, [])
 
   // Receber ICE
   const handleIce = useCallback(async (candidate: RTCIceCandidateInit) => {
     console.log('🧊 Received ICE candidate')
+    const pc = pcRef.current
+    
+    // Se não temos PC ou remote description ainda, guardar pra depois
+    if (!pc || !pc.remoteDescription) {
+      console.log('⏳ Queuing ICE candidate (no remote description yet)')
+      pendingIceCandidates.current.push(candidate)
+      return
+    }
+    
     try {
-      if (pcRef.current && pcRef.current.remoteDescription) {
-        await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate))
-      }
-    } catch (e) { console.error('ICE error:', e) }
+      await pc.addIceCandidate(new RTCIceCandidate(candidate))
+      console.log('✅ ICE candidate added')
+    } catch (e) { 
+      console.error('❌ ICE error:', e) 
+    }
   }, [])
 
   // Encerrar chamada
   const endCall = useCallback(() => {
     console.log('📴 Ending call')
-    pcRef.current?.close()
-    pcRef.current = null
+    if (pcRef.current) {
+      pcRef.current.close()
+      pcRef.current = null
+    }
+    pendingIceCandidates.current = []
+    isNegotiating.current = false
     stopMedia()
     setRemoteConnected(false)
     setConnectionState('new')
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null
+    }
   }, [stopMedia])
 
   // Toggle câmera/mic
@@ -201,31 +304,30 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   // Iniciar chamada quando status muda pra connected
   useEffect(() => {
     if (status === 'connected') {
-      // Só inicia se for o initiator (determinado no match)
       const isInitiator = (window as any).__isWebRTCInitiator
       console.log('🎯 Status connected, isInitiator:', isInitiator)
       
-      // Evitar múltiplas chamadas
-      if (pcRef.current) {
-        console.log('⚠️ PeerConnection already exists, skipping...')
-        return
-      }
+      // Limpar estado anterior
+      pendingIceCandidates.current = []
+      isNegotiating.current = false
       
       if (isInitiator) {
-        console.log('📞 Will start call as INITIATOR in 1.5s...')
+        console.log('📞 Will start call as INITIATOR in 2s...')
         const timer = setTimeout(() => {
-          if (!pcRef.current) startCall()
-        }, 1500)
+          if (!pcRef.current || pcRef.current.connectionState === 'closed') {
+            startCall()
+          }
+        }, 2000)
         return () => clearTimeout(timer)
       } else {
-        console.log('⏳ Waiting for offer as RESPONDER...')
-        // Só inicia a mídia local pra estar pronto quando receber offer
-        if (!localStreamRef.current) startMedia()
+        console.log('⏳ Waiting for offer as RESPONDER, starting media...')
+        // Responder inicia mídia pra estar pronto
+        startMedia()
       }
-    } else {
+    } else if (status === 'idle' || status === 'searching') {
       endCall()
     }
-  }, [status])
+  }, [status, startCall, startMedia, endCall])
 
   // Cleanup
   useEffect(() => () => endCall(), [endCall])
