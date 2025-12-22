@@ -6,6 +6,24 @@ const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' },
+  { urls: 'stun:stun4.l.google.com:19302' },
+  // TURN servers gratuitos (OpenRelay)
+  {
+    urls: 'turn:openrelay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443',
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  },
 ]
 
 interface VideoStageProps {
@@ -187,19 +205,27 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
       const isInitiator = (window as any).__isWebRTCInitiator
       console.log('🎯 Status connected, isInitiator:', isInitiator)
       
+      // Evitar múltiplas chamadas
+      if (pcRef.current) {
+        console.log('⚠️ PeerConnection already exists, skipping...')
+        return
+      }
+      
       if (isInitiator) {
         console.log('📞 Will start call as INITIATOR in 1.5s...')
-        const timer = setTimeout(() => startCall(), 1500)
+        const timer = setTimeout(() => {
+          if (!pcRef.current) startCall()
+        }, 1500)
         return () => clearTimeout(timer)
       } else {
         console.log('⏳ Waiting for offer as RESPONDER...')
         // Só inicia a mídia local pra estar pronto quando receber offer
-        startMedia()
+        if (!localStreamRef.current) startMedia()
       }
     } else {
       endCall()
     }
-  }, [status, startCall, endCall, startMedia])
+  }, [status])
 
   // Cleanup
   useEffect(() => () => endCall(), [endCall])
