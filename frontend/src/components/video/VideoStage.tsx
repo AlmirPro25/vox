@@ -3,19 +3,18 @@ import { useNexusStore } from '@/store/useNexusStore'
 import { useTheme } from '@/hooks/useTheme'
 
 const ICE_SERVERS: RTCIceServer[] = [
-  // STUN servers
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
   { urls: 'stun:stun3.l.google.com:19302' },
   { urls: 'stun:stun4.l.google.com:19302' },
-  // TURN servers (múltiplos para redundância)
   { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
   { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
   { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
 ]
 
-type ViewMode = 'default' | 'split' | 'fullscreen-local' | 'fullscreen-remote'
+type ViewMode = 'split' | 'default' | 'fullscreen-local' | 'fullscreen-remote'
+type ConnectionQuality = 'excellent' | 'good' | 'poor' | 'disconnected'
 
 interface VideoStageProps {
   onNext?: () => void
@@ -33,6 +32,8 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   const localStreamRef = useRef<MediaStream | null>(null)
   const pendingIceCandidates = useRef<RTCIceCandidateInit[]>([])
   const isNegotiating = useRef(false)
+  const reconnectAttempts = useRef(0)
+  const statsInterval = useRef<NodeJS.Timeout | null>(null)
   
   const [cameraOn, setCameraOn] = useState(false)
   const [micOn, setMicOn] = useState(false)
@@ -41,30 +42,65 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   const [connectionState, setConnectionState] = useState<string>('new')
   const [viewMode, setViewMode] = useState<ViewMode>('split')
   const [showControls, setShowControls] = useState(true)
+  const [quality, setQuality] = useState<ConnectionQuality>('disconnected')
+  const [isReconnecting, setIsReconnecting] = useState(false)
 
   const bgStyle = { background: theme === 'dark' ? '#0a0a0a' : '#f1f5f9' }
 
-  // Media functions
-  const startMedia = useCallback(async () => {
+  // Monitorar qualidade da conexão
+  const startQualityMonitor = useCallback(() => {
+    if (statsInterval.current) clearInterval(statsInterval.current)
+    statsInterval.current = setInterval(async () => {
+      const pc = pcRef.current
+      if (!pc) return
+      try {
+        const stats = await pc.getStats()
+        let packetsLost = 0, packetsReceived = 0
+        stats.forEach(report => {
+          if (report.type === 'inbound-rtp' && report.kind === 'video') {
+            packetsLost = report.packetsLost || 0
+            packetsReceived = report.packetsReceived || 0
+          }
+        })
+        const lossRate = packetsReceived > 0 ? packetsLost / packetsReceived : 0
+        if (lossRate < 0.01) setQuality('excellent')
+        else if (lossRate < 0.05) setQuality('good')
+        else setQuality('poor')
+      } catch (e) { /* ignore */ }
+    }, 3000)
+  }, [])
+
+  const stopQualityMonitor = useCallback(() => {
+    if (statsInterval.current) { clearInterval(statsInterval.current); statsInterval.current = null }
+    setQuality('disconnected')
+  }, [])
+
+  // Tentar só áudio se vídeo falhar
+  const startMedia = useCallback(async (videoEnabled = true) => {
     try {
-      console.log('📹 Requesting camera/mic...')
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, 
-        audio: true 
-      })
+      console.log('📹 Requesting media...', videoEnabled ? 'video+audio' : 'audio only')
+      const constraints = videoEnabled 
+        ? { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, audio: true }
+        : { video: false, audio: true }
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
       localStreamRef.current = stream
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream
         await localVideoRef.current.play().catch(() => {})
       }
-      setCameraOn(true)
-      setMicOn(true)
+      setCameraOn(videoEnabled && stream.getVideoTracks().length > 0)
+      setMicOn(stream.getAudioTracks().length > 0)
       setError(null)
-      console.log('✅ Camera/mic started')
+      console.log('✅ Media started')
       return stream
     } catch (err: any) {
       console.error('❌ Media error:', err)
-      setError(err.name === 'NotAllowedError' ? 'Permita acesso à câmera' : 'Câmera não disponível')
+      // Fallback para só áudio
+      if (videoEnabled) {
+        console.log('⚠️ Video failed, trying audio only...')
+        return startMedia(false)
+      }
+      setError('Permita acesso ao microfone')
       return null
     }
   }, [])
@@ -77,7 +113,32 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
     setMicOn(false)
   }, [])
 
-  // WebRTC functions
+  // Reconexão automática
+  const attemptReconnect = useCallback(async () => {
+    if (reconnectAttempts.current >= 3) {
+      console.log('❌ Max reconnect attempts reached')
+      setError('Conexão perdida. Clique em Próximo.')
+      return
+    }
+    reconnectAttempts.current++
+    setIsReconnecting(true)
+    console.log(`🔄 Reconnecting... attempt ${reconnectAttempts.current}`)
+    
+    // Fechar conexão atual
+    pcRef.current?.close()
+    pcRef.current = null
+    pendingIceCandidates.current = []
+    
+    // Esperar um pouco e tentar novamente
+    await new Promise(r => setTimeout(r, 2000))
+    
+    const isInitiator = (window as any).__isWebRTCInitiator
+    if (isInitiator) {
+      await startCall()
+    }
+    setIsReconnecting(false)
+  }, [])
+
   const createPC = useCallback(() => {
     if (pcRef.current) { pcRef.current.close(); pcRef.current = null }
     console.log('🔗 Creating PeerConnection...')
@@ -85,7 +146,6 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
     
     pc.onicecandidate = (e) => {
       if (e.candidate && sendSignal) {
-        console.log('🧊 Sending ICE')
         sendSignal('webrtc_ice', { candidate: e.candidate.toJSON() })
       }
     }
@@ -94,16 +154,37 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
       console.log('📺 Received remote track!', e.track.kind)
       if (remoteVideoRef.current && e.streams[0] && !remoteVideoRef.current.srcObject) {
         remoteVideoRef.current.srcObject = e.streams[0]
-        console.log('✅ Remote stream set')
         setRemoteConnected(true)
+        reconnectAttempts.current = 0 // Reset on success
+        startQualityMonitor()
       }
     }
     
     pc.onconnectionstatechange = () => {
       console.log('🔄 Connection state:', pc.connectionState)
       setConnectionState(pc.connectionState)
-      if (pc.connectionState === 'connected') { setRemoteConnected(true); isNegotiating.current = false }
-      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') setRemoteConnected(false)
+      
+      if (pc.connectionState === 'connected') {
+        setRemoteConnected(true)
+        isNegotiating.current = false
+        setQuality('good')
+      }
+      
+      if (pc.connectionState === 'disconnected') {
+        setQuality('poor')
+        // Tentar reconectar após 3 segundos
+        setTimeout(() => {
+          if (pcRef.current?.connectionState === 'disconnected') {
+            attemptReconnect()
+          }
+        }, 3000)
+      }
+      
+      if (pc.connectionState === 'failed') {
+        setRemoteConnected(false)
+        setQuality('disconnected')
+        attemptReconnect()
+      }
     }
 
     pc.oniceconnectionstatechange = () => {
@@ -112,21 +193,20 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
         console.log('🔄 ICE failed, restarting...')
         pc.restartIce()
       }
-      // Timeout se ficar muito tempo em checking
       if (pc.iceConnectionState === 'checking') {
         setTimeout(() => {
           if (pc.iceConnectionState === 'checking') {
-            console.log('⚠️ ICE checking timeout, restarting...')
+            console.log('⚠️ ICE timeout, restarting...')
             pc.restartIce()
           }
-        }, 10000) // 10 segundos
+        }, 15000)
       }
     }
 
     pc.onsignalingstatechange = () => { isNegotiating.current = pc.signalingState !== 'stable' }
     pcRef.current = pc
     return pc
-  }, [sendSignal])
+  }, [sendSignal, startQualityMonitor, attemptReconnect])
 
   const startCall = useCallback(async () => {
     if (isNegotiating.current) return
@@ -179,16 +259,17 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   const handleIce = useCallback(async (candidate: RTCIceCandidateInit) => {
     const pc = pcRef.current
     if (!pc || !pc.remoteDescription) { pendingIceCandidates.current.push(candidate); return }
-    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)) } catch (e) { console.error('ICE error:', e) }
+    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)) } catch (e) { /* ignore */ }
   }, [])
 
   const endCall = useCallback(() => {
     console.log('📴 Ending call')
+    stopQualityMonitor()
     pcRef.current?.close(); pcRef.current = null
-    pendingIceCandidates.current = []; isNegotiating.current = false
-    stopMedia(); setRemoteConnected(false); setConnectionState('new')
+    pendingIceCandidates.current = []; isNegotiating.current = false; reconnectAttempts.current = 0
+    stopMedia(); setRemoteConnected(false); setConnectionState('new'); setQuality('disconnected')
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null
-  }, [stopMedia])
+  }, [stopMedia, stopQualityMonitor])
 
   const toggleCamera = () => { const t = localStreamRef.current?.getVideoTracks()[0]; if (t) { t.enabled = !t.enabled; setCameraOn(t.enabled) } }
   const toggleMic = () => { const t = localStreamRef.current?.getAudioTracks()[0]; if (t) { t.enabled = !t.enabled; setMicOn(t.enabled) } }
@@ -198,7 +279,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   useEffect(() => {
     if (status === 'connected') {
       const isInitiator = (window as any).__isWebRTCInitiator
-      pendingIceCandidates.current = []; isNegotiating.current = false
+      pendingIceCandidates.current = []; isNegotiating.current = false; reconnectAttempts.current = 0
       if (isInitiator) { setTimeout(() => { if (!pcRef.current || pcRef.current.connectionState === 'closed') startCall() }, 2000) }
       else { startMedia() }
     } else if (status === 'idle' || status === 'searching') { endCall() }
@@ -206,7 +287,6 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
 
   useEffect(() => () => endCall(), [endCall])
 
-  // Auto-hide controls
   useEffect(() => {
     if (status !== 'connected') return
     const timer = setTimeout(() => setShowControls(false), 3000)
@@ -215,19 +295,17 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
 
   const cycleViewMode = () => {
     const modes: ViewMode[] = ['split', 'default', 'fullscreen-local', 'fullscreen-remote']
-    const idx = modes.indexOf(viewMode)
-    setViewMode(modes[(idx + 1) % modes.length])
+    setViewMode(modes[(modes.indexOf(viewMode) + 1) % modes.length])
   }
 
-  return (
-    <div 
-      className="h-full w-full relative overflow-hidden" 
-      style={bgStyle}
-      onMouseMove={() => setShowControls(true)}
-      onTouchStart={() => setShowControls(true)}
-    >
+  const qualityColor = { excellent: 'bg-green-500', good: 'bg-yellow-500', poor: 'bg-orange-500', disconnected: 'bg-red-500' }
+  const qualityText = { excellent: 'Excelente', good: 'Boa', poor: 'Fraca', disconnected: 'Desconectado' }
 
-      {/* Estado Idle */}
+  return (
+    <div className="h-full w-full relative overflow-hidden" style={bgStyle}
+      onMouseMove={() => setShowControls(true)} onTouchStart={() => setShowControls(true)}>
+
+      {/* Idle */}
       {status === 'idle' && (
         <div className="h-full flex items-center justify-center">
           <div className="text-center px-4">
@@ -242,7 +320,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
         </div>
       )}
 
-      {/* Estado Searching */}
+      {/* Searching */}
       {status === 'searching' && (
         <div className="h-full flex items-center justify-center">
           <div className="text-center px-4">
@@ -261,23 +339,38 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
         </div>
       )}
 
-      {/* Estado Connected - Video Call */}
+      {/* Connected */}
       {status === 'connected' && (
         <div className="h-full w-full relative">
-          {/* Layout Split 50/50 */}
+          {/* Indicador de qualidade */}
+          <div className="absolute top-3 right-3 z-20 flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm">
+            <span className={`w-2 h-2 rounded-full ${qualityColor[quality]} animate-pulse`} />
+            <span className="text-white text-xs">{qualityText[quality]}</span>
+          </div>
+
+          {/* Reconectando overlay */}
+          {isReconnecting && (
+            <div className="absolute inset-0 z-30 bg-black/70 flex items-center justify-center">
+              <div className="text-center">
+                <div className="w-12 h-12 border-4 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin mx-auto mb-3" />
+                <p className="text-white">Reconectando...</p>
+              </div>
+            </div>
+          )}
+
+          {/* Split 50/50 */}
           {viewMode === 'split' && (
             <div className="h-full w-full flex flex-col md:flex-row">
-              {/* Vídeo Remoto */}
               <div className="flex-1 relative bg-black min-h-[40%] md:min-h-0">
                 <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
                 {!remoteConnected && (
                   <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-gray-900 to-black">
                     <div className="text-center">
-                      <div className="w-20 h-20 mx-auto mb-3 rounded-full bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center shadow-lg">
+                      <div className="w-20 h-20 mx-auto mb-3 rounded-full bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center">
                         <span className="text-2xl font-bold text-white">{partnerInfo?.anonymousId?.slice(0, 2)}</span>
                       </div>
                       <p className="text-white font-medium">{partnerInfo?.anonymousId}</p>
-                      <p className="text-gray-400 text-xs mt-1">{connectionState === 'connecting' ? 'Conectando...' : 'Aguardando vídeo'}</p>
+                      <p className="text-gray-400 text-xs mt-1">{connectionState === 'connecting' ? 'Conectando...' : 'Aguardando'}</p>
                     </div>
                   </div>
                 )}
@@ -286,12 +379,8 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
                   <span className="text-white text-sm font-medium">{partnerInfo?.anonymousId}</span>
                 </div>
               </div>
-
-              {/* Divisor */}
               <div className="hidden md:block w-1 bg-black" />
               <div className="md:hidden h-1 bg-black" />
-
-              {/* Vídeo Local */}
               <div className="flex-1 relative bg-black min-h-[40%] md:min-h-0">
                 <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" style={{ transform: 'scaleX(-1)' }} />
                 <div className="absolute top-3 left-3 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm flex items-center gap-2">
@@ -302,7 +391,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
             </div>
           )}
 
-          {/* Layout Default (remoto grande, local pequeno) */}
+          {/* Default */}
           {viewMode === 'default' && (
             <>
               <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
@@ -342,42 +431,33 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
             </>
           )}
 
-          {/* Controles - aparecem com hover/touch */}
+          {/* Controls */}
           <div className={`absolute inset-x-0 bottom-0 transition-all duration-300 ${showControls ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
             <div className="bg-gradient-to-t from-black/80 via-black/40 to-transparent pt-16 pb-4 md:pb-6 px-4">
               <div className="flex items-center justify-center gap-3 md:gap-4">
-                {/* Mic */}
-                <button onClick={toggleMic} className={`p-3 md:p-4 rounded-full ${micOn ? 'bg-white/20 hover:bg-white/30' : 'bg-red-500 hover:bg-red-600'} text-white transition-all shadow-lg backdrop-blur-sm`}>
+                <button onClick={toggleMic} className={`p-3 md:p-4 rounded-full ${micOn ? 'bg-white/20 hover:bg-white/30' : 'bg-red-500'} text-white transition-all shadow-lg backdrop-blur-sm`}>
                   <svg className="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     {micOn ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                       : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />}
                   </svg>
                 </button>
-
-                {/* Camera */}
-                <button onClick={toggleCamera} className={`p-3 md:p-4 rounded-full ${cameraOn ? 'bg-white/20 hover:bg-white/30' : 'bg-red-500 hover:bg-red-600'} text-white transition-all shadow-lg backdrop-blur-sm`}>
+                <button onClick={toggleCamera} className={`p-3 md:p-4 rounded-full ${cameraOn ? 'bg-white/20 hover:bg-white/30' : 'bg-red-500'} text-white transition-all shadow-lg backdrop-blur-sm`}>
                   <svg className="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     {cameraOn ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                       : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728L5.636 5.636" />}
                   </svg>
                 </button>
-
-                {/* View Mode */}
                 <button onClick={cycleViewMode} className="p-3 md:p-4 rounded-full bg-white/20 hover:bg-white/30 text-white transition-all shadow-lg backdrop-blur-sm">
                   <svg className="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
                   </svg>
                 </button>
-
-                {/* Next */}
                 <button onClick={onNext} className="px-5 md:px-6 py-3 md:py-4 bg-blue-500 hover:bg-blue-600 text-white rounded-full font-semibold text-sm md:text-base transition-all shadow-lg flex items-center gap-2">
                   <span>Próximo</span>
                   <svg className="w-4 h-4 md:w-5 md:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
                   </svg>
                 </button>
-
-                {/* Stop */}
                 <button onClick={onLeave} className="p-3 md:p-4 rounded-full bg-red-500 hover:bg-red-600 text-white transition-all shadow-lg">
                   <svg className="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -388,7 +468,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
           </div>
 
           {error && (
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-xl">
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-xl z-40">
               {error}
             </div>
           )}
