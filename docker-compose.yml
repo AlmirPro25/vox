@@ -1,0 +1,41 @@
+
+version: '3.8'
+
+services:
+  nexus-cache:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  nexus-backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment:
+      DATABASE_PATH: "/app/data/voxbridge.db"
+      REDIS_URL: "nexus-cache:6379"
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      JWT_SECRET: ${JWT_SECRET:-voxbridge-dev-secret-key-32chars}
+    depends_on:
+      - nexus-cache
+    ports:
+      - "8080:8080"
+    volumes:
+      - sqlite_data:/app/data
+
+  nexus-frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    environment:
+      NEXT_PUBLIC_API_URL: "http://localhost:8080"
+      NEXT_PUBLIC_LIVEKIT_URL: "ws://localhost:7880"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - nexus-backend
+
+volumes:
+  sqlite_data:

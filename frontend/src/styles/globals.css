@@ -1,0 +1,234 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============== THEME VARIABLES ============== */
+:root {
+  /* Dark theme (default) */
+  --bg-primary: #030303;
+  --bg-secondary: #0a0a0a;
+  --bg-tertiary: #111111;
+  --bg-card: rgba(10, 10, 10, 0.8);
+  --bg-card-light: rgba(20, 20, 20, 0.6);
+  --bg-hover: rgba(255, 255, 255, 0.05);
+  
+  --text-primary: #ffffff;
+  --text-secondary: #a1a1a1;
+  --text-muted: #666666;
+  
+  --border-primary: rgba(255, 255, 255, 0.05);
+  --border-secondary: rgba(255, 255, 255, 0.1);
+  
+  --accent: #00F2FF;
+  --accent-glow: rgba(0, 242, 255, 0.15);
+  
+  --shadow-color: rgba(0, 0, 0, 0.5);
+  --glow-cyan: rgba(0, 242, 255, 0.3);
+  --glow-green: rgba(0, 255, 102, 0.3);
+}
+
+.light {
+  --bg-primary: #f8fafc;
+  --bg-secondary: #f1f5f9;
+  --bg-tertiary: #e2e8f0;
+  --bg-card: rgba(255, 255, 255, 0.9);
+  --bg-card-light: rgba(255, 255, 255, 0.7);
+  --bg-hover: rgba(0, 0, 0, 0.05);
+  
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+  
+  --border-primary: rgba(0, 0, 0, 0.05);
+  --border-secondary: rgba(0, 0, 0, 0.1);
+  
+  --accent: #0891b2;
+  --accent-glow: rgba(8, 145, 178, 0.15);
+  
+  --shadow-color: rgba(0, 0, 0, 0.1);
+  --glow-cyan: rgba(8, 145, 178, 0.2);
+  --glow-green: rgba(34, 197, 94, 0.2);
+}
+
+/* ============== BASE STYLES ============== */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* ============== SCROLLBAR ============== */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bg-tertiary);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
+/* ============== GLASS EFFECTS ============== */
+.glass {
+  background: var(--bg-card);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-primary);
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+.glass-light {
+  background: var(--bg-card-light);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-secondary);
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+/* ============== GLOW EFFECTS ============== */
+.glow-cyan {
+  box-shadow: 0 0 20px var(--glow-cyan), 0 0 40px var(--accent-glow);
+}
+
+.glow-green {
+  box-shadow: 0 0 20px var(--glow-green), 0 0 40px rgba(0, 255, 102, 0.1);
+}
+
+/* ============== ANIMATIONS ============== */
+@keyframes pulse-ring {
+  0% { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+/* ============== COMPONENTS ============== */
+.btn-primary {
+  @apply px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-semibold rounded-xl;
+  @apply hover:from-cyan-400 hover:to-blue-400 active:scale-95;
+  @apply transition-all duration-200 ease-out;
+  @apply shadow-lg;
+  box-shadow: 0 4px 20px var(--glow-cyan);
+}
+
+.btn-secondary {
+  @apply px-6 py-3 rounded-xl font-medium;
+  @apply active:scale-95 transition-all duration-200 ease-out;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-secondary);
+  color: var(--text-primary);
+}
+
+.btn-secondary:hover {
+  background: var(--bg-tertiary);
+}
+
+.btn-danger {
+  @apply px-4 py-2 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg;
+  @apply hover:bg-red-500/20 hover:border-red-500/50 active:scale-95;
+  @apply transition-all duration-200 ease-out;
+}
+
+.input-dark {
+  @apply w-full rounded-xl px-4 py-3 text-sm;
+  @apply focus:outline-none transition-all duration-200;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-secondary);
+  color: var(--text-primary);
+}
+
+.input-dark::placeholder {
+  color: var(--text-muted);
+}
+
+.input-dark:focus {
+  border-color: var(--accent);
+  background: var(--bg-tertiary);
+}
+
+.card {
+  @apply rounded-2xl p-4;
+  background: var(--bg-card-light);
+  border: 1px solid var(--border-primary);
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+/* ============== STATUS INDICATORS ============== */
+.status-dot {
+  @apply w-2.5 h-2.5 rounded-full;
+}
+
+.status-online {
+  @apply bg-green-500;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.6);
+}
+
+.status-searching {
+  @apply bg-yellow-500 animate-pulse;
+  box-shadow: 0 0 8px rgba(234, 179, 8, 0.6);
+}
+
+.status-offline {
+  background: var(--text-muted);
+}
+
+/* ============== TYPOGRAPHY ============== */
+.text-gradient {
+  @apply bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent;
+}
+
+.label {
+  @apply text-[10px] uppercase tracking-widest font-medium;
+  color: var(--text-muted);
+}
+
+/* ============== THEME SPECIFIC ============== */
+.theme-bg {
+  background: var(--bg-primary);
+}
+
+.theme-bg-secondary {
+  background: var(--bg-secondary);
+}
+
+.theme-text {
+  color: var(--text-primary);
+}
+
+.theme-text-secondary {
+  color: var(--text-secondary);
+}
+
+.theme-text-muted {
+  color: var(--text-muted);
+}
+
+.theme-border {
+  border-color: var(--border-primary);
+}

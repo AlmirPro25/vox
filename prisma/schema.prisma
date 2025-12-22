@@ -1,0 +1,60 @@
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id              String   @id @default(uuid())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Anonymous Identity
+  anonymousId     String   @unique
+  lastIp          String?
+  
+  // Preferences
+  nativeLanguage  String   @default("en")
+  targetLanguage  String?
+  
+  // Stats
+  reputation      Float    @default(100.0)
+  isBanned        Boolean  @default(false)
+  
+  // Relations
+  reports         Report[] @relation("ReportedUser")
+  sessions        Session[]
+}
+
+model Session {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  startTime   DateTime @default(now())
+  endTime     DateTime?
+  roomId      String   @unique
+  
+  // AI Metrics
+  translationCount Int @default(0)
+  avgLatency       Float @default(0)
+}
+
+model Report {
+  id             String   @id @default(uuid())
+  createdAt      DateTime @default(now())
+  reporterId     String
+  reportedUserId String
+  reportedUser   User     @relation("ReportedUser", fields: [reportedUserId], references: [id])
+  reason         String
+  aiEvidence     Json?    // Neural Moderation Flags
+}
+
+model GlobalConfig {
+  id    Int    @id @default(1)
+  key   String @unique
+  value String
+}

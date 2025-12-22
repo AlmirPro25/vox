@@ -1,0 +1,121 @@
+
+openapi: 3.0.3
+info:
+  title: VOX-BRIDGE API - The Global Nexus
+  description: API de alta performance para conexões humanas mediadas por IA Multimodal.
+  version: 1.0.0
+servers:
+  - url: https://api.voxbridge.global/v1
+    description: Production Server
+
+paths:
+  /auth/anonymous:
+    post:
+      summary: Cria uma sessão efêmera
+      description: Gera um token JWT e chaves de criptografia para uma sessão anônima.
+      responses:
+        '201':
+          description: Sessão criada com sucesso.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+
+  /user/preferences:
+    patch:
+      summary: Atualiza preferências de pareamento
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserPreferences'
+      responses:
+        '200':
+          description: Preferências atualizadas.
+
+  /match/join:
+    post:
+      summary: Entra na fila de matchmaking
+      security:
+        - BearerAuth: []
+      responses:
+        '202':
+          description: Usuário inserido na fila global.
+
+  /match/status:
+    get:
+      summary: Status do pareamento
+      description: Recomendado uso via WebSocket, mas disponível via polling para fallback.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatchStatus'
+
+  /rtc/token:
+    get:
+      summary: Gera token para o LiveKit SFU
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  room_name:
+                    type: string
+
+components:
+  schemas:
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        session_id:
+          type: string
+        aes_key:
+          type: string
+
+    UserPreferences:
+      type: object
+      properties:
+        native_language:
+          type: string
+          example: "pt-BR"
+        target_language:
+          type: string
+          example: "en-US"
+        interests:
+          type: array
+          items:
+            type: string
+        ai_voice_cloning:
+          type: boolean
+
+    MatchStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [searching, connected, disconnected]
+        partner_id:
+          type: string
+        room_id:
+          type: string
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
