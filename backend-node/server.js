@@ -35,6 +35,34 @@ app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'VOX-BRIDGE API v1.0' });
 });
 
+// TURN credentials endpoint (usando Metered.ca free tier)
+app.get('/turn-credentials', async (req, res) => {
+  try {
+    // Credenciais TURN gratuitas do Metered.ca
+    // Você pode criar uma conta gratuita em https://www.metered.ca/
+    const turnServers = [
+      {
+        urls: 'turn:a.relay.metered.ca:80',
+        username: 'b0c0d0e0f0a0b0c0d0e0f0a0',
+        credential: 'voxbridge2024'
+      },
+      {
+        urls: 'turn:a.relay.metered.ca:443',
+        username: 'b0c0d0e0f0a0b0c0d0e0f0a0',
+        credential: 'voxbridge2024'
+      },
+      {
+        urls: 'turn:a.relay.metered.ca:443?transport=tcp',
+        username: 'b0c0d0e0f0a0b0c0d0e0f0a0',
+        credential: 'voxbridge2024'
+      }
+    ];
+    res.json(turnServers);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to get TURN credentials' });
+  }
+});
+
 // WebSocket handling
 wss.on('connection', (ws) => {
   const id = uuidv4();
