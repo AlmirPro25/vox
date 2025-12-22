@@ -2,12 +2,26 @@ import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { useNexusStore } from '@/store/useNexusStore'
 import { useTheme } from '@/hooks/useTheme'
 
-// Apenas STUN servers (gratuitos e funcionam bem)
+// ICE servers - STUN + TURN gratuitos
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun3.l.google.com:19302' },
+  // TURN servers gratuitos (Metered.ca public)
+  {
+    urls: 'turn:openrelay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443',
+    username: 'openrelayproject', 
+    credential: 'openrelayproject'
+  },
+  {
+    urls: 'turns:openrelay.metered.ca:443',
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  },
 ]
 
 interface VideoStageProps {
@@ -84,7 +98,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
     
     pc.onicecandidate = (e) => {
       if (e.candidate && sendSignal) {
-        console.log('🧊 Sending ICE candidate:', e.candidate.type, e.candidate.protocol)
+        console.log('🧊 Sending ICE:', e.candidate.type || 'unknown', e.candidate.protocol || '', e.candidate.address || '')
         sendSignal('webrtc_ice', { candidate: e.candidate.toJSON() })
       } else if (!e.candidate) {
         console.log('🧊 ICE gathering complete')
@@ -99,9 +113,10 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
       console.log('📺 Received remote track!', e.track.kind)
       const remoteVideo = remoteVideoRef.current
       if (remoteVideo && e.streams[0]) {
-        // Só setar se for diferente
-        if (remoteVideo.srcObject !== e.streams[0]) {
+        // Só setar uma vez (evita erro de play)
+        if (!remoteVideo.srcObject) {
           remoteVideo.srcObject = e.streams[0]
+          console.log('✅ Remote stream set')
         }
         setRemoteConnected(true)
       }
