@@ -18,36 +18,21 @@ export default function NexusApp() {
   wsRef.current = ws
 
   useEffect(() => {
-    const initNexus = async () => {
-      try {
-        // Check for saved preferences
-        const savedUser = useNexusStore.getState().user
-        const anonId = savedUser?.anonymousId || `NX-${Math.random().toString(36).substr(2, 9).toUpperCase()}`
-        
-        const res = await axios.post(`${process.env.NEXT_PUBLIC_API_URL}/v1/auth/anonymous`, {
-          anonymous_id: anonId,
-          native_language: savedUser?.nativeLanguage || 'pt',
-          target_language: savedUser?.targetLanguage || 'en',
-          interests: savedUser?.interests || [],
-          country: 'BR'
-        })
-        
-        setUser({
-          id: res.data.session_id,
-          anonymousId: anonId,
-          nativeLanguage: savedUser?.nativeLanguage || 'pt',
-          targetLanguage: savedUser?.targetLanguage || 'en',
-          interests: savedUser?.interests || [],
-          country: 'BR',
-          reputation: 100
-        })
-        setToken(res.data.token)
-        wsRef.current.connect(res.data.token)
-      } catch (err) {
-        console.error("Nexus Initialization Failed", err)
-      }
-    }
-    initNexus()
+    // Conectar direto no WebSocket (sem auth)
+    const savedUser = useNexusStore.getState().user
+    const anonId = savedUser?.anonymousId || `NX-${Math.random().toString(36).substr(2, 9).toUpperCase()}`
+    
+    setUser({
+      id: anonId,
+      anonymousId: anonId,
+      nativeLanguage: savedUser?.nativeLanguage || 'pt',
+      targetLanguage: savedUser?.targetLanguage || 'en',
+      interests: savedUser?.interests || [],
+      country: 'BR',
+      reputation: 100
+    })
+    setToken('direct')
+    wsRef.current.connect()
   }, [setUser, setToken])
 
   useEffect(() => {
