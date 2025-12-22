@@ -2,11 +2,12 @@ import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { useNexusStore } from '@/store/useNexusStore'
 import { useTheme } from '@/hooks/useTheme'
 
-// STUN servers apenas (TURN será buscado dinamicamente)
-const STUN_SERVERS = [
+// Apenas STUN servers (gratuitos e funcionam bem)
+const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' },
 ]
 
 interface VideoStageProps {
@@ -31,24 +32,8 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   const [remoteConnected, setRemoteConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [connectionState, setConnectionState] = useState<string>('new')
-  const iceServersRef = useRef<RTCIceServer[]>(STUN_SERVERS)
 
   const bgStyle = { background: theme === 'dark' ? 'linear-gradient(135deg, #0a0a0a 0%, #111 100%)' : 'linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%)' }
-
-  // Buscar credenciais TURN do backend
-  const fetchTurnServers = useCallback(async () => {
-    try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://vox-api-hq2l.onrender.com'
-      const response = await fetch(`${apiUrl}/turn-credentials`)
-      if (response.ok) {
-        const servers = await response.json()
-        iceServersRef.current = [...STUN_SERVERS, ...servers]
-        console.log('✅ TURN servers loaded:', servers.length)
-      }
-    } catch (e) {
-      console.log('⚠️ Using STUN only (no TURN)')
-    }
-  }, [])
 
   // Iniciar mídia local
   const startMedia = useCallback(async () => {
@@ -91,9 +76,9 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
       pcRef.current = null
     }
     
-    console.log('🔗 Creating PeerConnection with', iceServersRef.current.length, 'ICE servers')
+    console.log('🔗 Creating PeerConnection...')
     const pc = new RTCPeerConnection({ 
-      iceServers: iceServersRef.current,
+      iceServers: ICE_SERVERS,
       iceCandidatePoolSize: 10
     })
     
@@ -307,11 +292,6 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   useEffect(() => {
     (window as any).__webrtc = { handleOffer, handleAnswer, handleIce, startCall }
   }, [handleOffer, handleAnswer, handleIce, startCall])
-
-  // Buscar TURN servers ao montar
-  useEffect(() => {
-    fetchTurnServers()
-  }, [fetchTurnServers])
 
   // Iniciar chamada quando status muda pra connected
   useEffect(() => {
