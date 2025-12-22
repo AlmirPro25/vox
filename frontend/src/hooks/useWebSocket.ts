@@ -93,13 +93,25 @@ export function useWebSocket() {
             break
           // WebRTC signals - forward to VideoStage
           case 'webrtc_offer':
-            if ((window as any).__webrtc?.handleOffer) {
-              (window as any).__webrtc.handleOffer(payload.sdp)
+            // Só processa offer se for RESPONDER (não INITIATOR)
+            if (!(window as any).__isWebRTCInitiator) {
+              console.log('📥 Processing offer as RESPONDER')
+              if ((window as any).__webrtc?.handleOffer) {
+                (window as any).__webrtc.handleOffer(payload.sdp)
+              }
+            } else {
+              console.log('⚠️ Ignoring offer (I am INITIATOR)')
             }
             break
           case 'webrtc_answer':
-            if ((window as any).__webrtc?.handleAnswer) {
-              (window as any).__webrtc.handleAnswer(payload.sdp)
+            // Só processa answer se for INITIATOR
+            if ((window as any).__isWebRTCInitiator) {
+              console.log('📥 Processing answer as INITIATOR')
+              if ((window as any).__webrtc?.handleAnswer) {
+                (window as any).__webrtc.handleAnswer(payload.sdp)
+              }
+            } else {
+              console.log('⚠️ Ignoring answer (I am RESPONDER)')
             }
             break
           case 'webrtc_ice':
