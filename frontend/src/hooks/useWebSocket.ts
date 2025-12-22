@@ -10,25 +10,58 @@ export function useWebSocket() {
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const reconnectAttempts = useRef(0)
   const reconnectTimeout = useRef<NodeJS.Timeout | null>(null)
+  const heartbeatInterval = useRef<NodeJS.Timeout | null>(null)
+  const lastPongTime = useRef<number>(Date.now())
   const isIntentionalClose = useRef(false)
   const maxReconnectAttempts = 10
+  const HEARTBEAT_INTERVAL = 25000 // 25 segundos
+  const HEARTBEAT_TIMEOUT = 35000 // 35 segundos sem pong = desconectado
   
-  const { setStatus, setRoom, addMessage, resetSession, setPartnerTyping } = useNexusStore()
+  const { setStatus, setRoom, addMessage, resetSession, setPartnerTyping, setWsStatus, setOnlineCount } = useNexusStore()
   const { playConnect, playDisconnect, playMessage } = useSound()
+
+  // Iniciar heartbeat
+  const startHeartbeat = useCallback(() => {
+    if (heartbeatInterval.current) clearInterval(heartbeatInterval.current)
+    lastPongTime.current = Date.now()
+    
+    heartbeatInterval.current = setInterval(() => {
+      const ws = wsRef.current
+      if (!ws || ws.readyState !== WebSocket.OPEN) return
+      
+      // Verificar se recebeu pong recentemente
+      if (Date.now() - lastPongTime.current > HEARTBEAT_TIMEOUT) {
+        console.log('💔 Heartbeat timeout - connection dead')
+        ws.close()
+        return
+      }
+      
+      // Enviar ping
+      ws.send(JSON.stringify({ type: 'ping' }))
+    }, HEARTBEAT_INTERVAL)
+  }, [])
+
+  const stopHeartbeat = useCallback(() => {
+    if (heartbeatInterval.current) {
+      clearInterval(heartbeatInterval.current)
+      heartbeatInterval.current = null
+    }
+  }, [])
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
     if (wsRef.current?.readyState === WebSocket.CONNECTING) return
 
-    // Limpar timeout anterior
     if (reconnectTimeout.current) {
       clearTimeout(reconnectTimeout.current)
       reconnectTimeout.current = null
     }
 
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'wss://vox-api-hq2l.onrender.com'
+    const isReconnect = reconnectAttempts.current > 0
     
-    console.log('🔌 Connecting to:', wsUrl, reconnectAttempts.current > 0 ? `(attempt ${reconnectAttempts.current})` : '')
+    console.log('🔌 Connecting to:', wsUrl, isReconnect ? `(attempt ${reconnectAttempts.current})` : '')
+    setWsStatus(isReconnect ? 'reconnecting' : 'connecting')
     
     try {
       const ws = new WebSocket(wsUrl)
@@ -38,7 +71,9 @@ export function useWebSocket() {
       ws.onopen = () => {
         console.log('✅ WebSocket connected!')
         reconnectAttempts.current = 0
+        setWsStatus('connected')
         setStatus('idle')
+        startHeartbeat()
       }
 
       ws.onerror = (err) => {
@@ -48,6 +83,14 @@ export function useWebSocket() {
       ws.onmessage = (event) => {
         try {
           const { type, payload } = JSON.parse(event.data)
+          
+          // Pong recebido - atualizar timestamp
+          if (type === 'pong') {
+            lastPongTime.current = Date.now()
+            if (payload?.online) setOnlineCount(payload.online)
+            return
+          }
+          
           console.log('📨 WS:', type, payload)
 
           switch (type) {
@@ -59,6 +102,7 @@ export function useWebSocket() {
                   anonymousId: payload.anonymousId
                 })
               }
+              if (payload?.online) setOnlineCount(payload.online)
               break
             case 'queue_joined':
               setStatus('searching')
@@ -66,7 +110,7 @@ export function useWebSocket() {
             case 'queue_left':
               setStatus('idle')
               break
-            case 'matched':
+            case 'matched': {
               const myId = useNexusStore.getState().user?.id || ''
               const partnerId = payload.partner?.odId || payload.partner?.anonymousId || ''
               const isInitiator = myId < partnerId
@@ -83,6 +127,7 @@ export function useWebSocket() {
               ;(window as any).__isWebRTCInitiator = isInitiator
               console.log('🎯 WebRTC role:', isInitiator ? 'INITIATOR' : 'RESPONDER')
               break
+            }
             case 'chat_message':
               addMessage({
                 id: Date.now().toString(),
@@ -105,27 +150,17 @@ export function useWebSocket() {
             case 'webrtc_offer':
               if (!(window as any).__isWebRTCInitiator) {
                 console.log('📥 Processing offer as RESPONDER')
-                if ((window as any).__webrtc?.handleOffer) {
-                  (window as any).__webrtc.handleOffer(payload.sdp)
-                }
-              } else {
-                console.log('⚠️ Ignoring offer (I am INITIATOR)')
+                ;(window as any).__webrtc?.handleOffer?.(payload.sdp)
               }
               break
             case 'webrtc_answer':
               if ((window as any).__isWebRTCInitiator) {
                 console.log('📥 Processing answer as INITIATOR')
-                if ((window as any).__webrtc?.handleAnswer) {
-                  (window as any).__webrtc.handleAnswer(payload.sdp)
-                }
-              } else {
-                console.log('⚠️ Ignoring answer (I am RESPONDER)')
+                ;(window as any).__webrtc?.handleAnswer?.(payload.sdp)
               }
               break
             case 'webrtc_ice':
-              if ((window as any).__webrtc?.handleIce && payload.candidate) {
-                (window as any).__webrtc.handleIce(payload.candidate)
-              }
+              ;(window as any).__webrtc?.handleIce?.(payload.candidate)
               break
           }
 
@@ -136,20 +171,19 @@ export function useWebSocket() {
       }
 
       ws.onclose = (event) => {
-        console.log('🔌 WebSocket disconnected', event.code, event.reason)
+        console.log('🔌 WebSocket disconnected', event.code)
         wsRef.current = null
+        stopHeartbeat()
+        setWsStatus('disconnected')
         
-        // Reconectar automaticamente se não foi fechamento intencional
         if (!isIntentionalClose.current && reconnectAttempts.current < maxReconnectAttempts) {
-          // Backoff exponencial: 1s, 2s, 4s, 8s... max 30s
           const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000)
           reconnectAttempts.current++
           
           console.log(`🔄 Reconnecting in ${delay/1000}s... (attempt ${reconnectAttempts.current}/${maxReconnectAttempts})`)
+          setWsStatus('reconnecting')
           
-          reconnectTimeout.current = setTimeout(() => {
-            connect()
-          }, delay)
+          reconnectTimeout.current = setTimeout(() => connect(), delay)
         } else if (reconnectAttempts.current >= maxReconnectAttempts) {
           console.log('❌ Max reconnect attempts reached')
           setStatus('idle')
@@ -157,18 +191,21 @@ export function useWebSocket() {
       }
     } catch (err) {
       console.error('❌ WebSocket creation error:', err)
+      setWsStatus('disconnected')
     }
-  }, [setStatus, setRoom, addMessage, resetSession, setPartnerTyping, playConnect, playDisconnect, playMessage])
+  }, [setStatus, setRoom, addMessage, resetSession, setPartnerTyping, setWsStatus, setOnlineCount, playConnect, playDisconnect, playMessage, startHeartbeat, stopHeartbeat])
 
   const disconnect = useCallback(() => {
     isIntentionalClose.current = true
+    stopHeartbeat()
     if (reconnectTimeout.current) {
       clearTimeout(reconnectTimeout.current)
       reconnectTimeout.current = null
     }
     wsRef.current?.close()
     wsRef.current = null
-  }, [])
+    setWsStatus('disconnected')
+  }, [stopHeartbeat, setWsStatus])
 
   const send = useCallback((type: string, payload?: any) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -202,18 +239,17 @@ export function useWebSocket() {
     send('report_user', { reason, details })
   }, [send])
 
-  const blockUser = useCallback(() => {
-    send('block_user')
-  }, [send])
+  const blockUser = useCallback(() => send('block_user'), [send])
 
   useEffect(() => {
     return () => {
       isIntentionalClose.current = true
+      stopHeartbeat()
       if (reconnectTimeout.current) clearTimeout(reconnectTimeout.current)
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
       wsRef.current?.close()
     }
-  }, [])
+  }, [stopHeartbeat])
 
   return {
     socket: wsRef.current,

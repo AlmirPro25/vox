@@ -75,7 +75,7 @@ wss.on('connection', (ws) => {
   const user = { id, ws, anonymousId: generateAnonId(), nativeLanguage: 'pt', targetLanguage: 'en', interests: [], country: 'BR', roomId: null };
   users.set(id, user);
 
-  ws.send(JSON.stringify({ type: 'connected', payload: { userId: id, anonymousId: user.anonymousId } }));
+  ws.send(JSON.stringify({ type: 'connected', payload: { userId: id, anonymousId: user.anonymousId, online: users.size } }));
 
   ws.on('message', (data) => {
     try {
@@ -92,6 +92,10 @@ wss.on('connection', (ws) => {
 
 function handleMessage(user, msg) {
   switch (msg.type) {
+    case 'ping': 
+      // Responder com pong e contagem de usuários online
+      user.ws.send(JSON.stringify({ type: 'pong', payload: { online: users.size, queue: queue.length } }));
+      break;
     case 'join_queue': joinQueue(user, msg.payload); break;
     case 'leave_queue': leaveQueue(user); break;
     case 'chat_message': sendChatMessage(user, msg.payload); break;

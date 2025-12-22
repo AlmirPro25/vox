@@ -5,6 +5,7 @@ import { VideoStage } from '@/components/video/VideoStage'
 import { TranslationPanel } from '@/components/chat/TranslationPanel'
 import { MobileHeader } from '@/components/nav/MobileHeader'
 import { ReportModal } from '@/components/ui/ReportModal'
+import { ConnectionStatus } from '@/components/ui/ConnectionStatus'
 import { useNexusStore } from '@/store/useNexusStore'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useTheme } from '@/hooks/useTheme'
@@ -114,6 +115,11 @@ export default function NexusApp() {
 
       {/* Mobile Header */}
       <MobileHeader onLeaveRoom={handleLeaveRoom} onReport={() => setShowReport(true)} />
+
+      {/* Connection Status - Top Right */}
+      <div className="absolute top-3 right-3 z-30 hidden md:block">
+        <ConnectionStatus />
+      </div>
 
       {/* Main Video Area */}
       <Column width="flex-1" className={`relative ${mobileTab !== 'video' ? 'hidden md:block' : ''}`}>

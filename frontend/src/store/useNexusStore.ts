@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware'
 
 export type Language = 'en' | 'pt' | 'es' | 'fr' | 'de' | 'it' | 'ja' | 'ko' | 'zh' | 'ru' | 'ar'
 export type ConnectionStatus = 'idle' | 'searching' | 'connecting' | 'connected' | 'error'
+export type WebSocketStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
 
 export interface User {
   id: string
@@ -39,15 +40,19 @@ interface NexusState {
   user: User | null
   token: string | null
   status: ConnectionStatus
+  wsStatus: WebSocketStatus
   messages: ChatMessage[]
   roomID: string | null
   partnerInfo: PartnerInfo | null
   partnerTyping: boolean
   sessionStats: SessionStats
+  onlineCount: number
   
   setUser: (user: User) => void
   setToken: (token: string) => void
   setStatus: (status: ConnectionStatus) => void
+  setWsStatus: (status: WebSocketStatus) => void
+  setOnlineCount: (count: number) => void
   setRoom: (roomID: string, partner: PartnerInfo) => void
   addMessage: (msg: ChatMessage) => void
   updateLanguages: (native: Language, target: Language) => void
@@ -62,15 +67,19 @@ export const useNexusStore = create<NexusState>()(
       user: null,
       token: null,
       status: 'idle',
+      wsStatus: 'disconnected',
       messages: [],
       roomID: null,
       partnerInfo: null,
       partnerTyping: false,
       sessionStats: { startTime: null, messageCount: 0 },
+      onlineCount: 0,
 
       setUser: (user) => set({ user }),
       setToken: (token) => set({ token }),
       setStatus: (status) => set({ status }),
+      setWsStatus: (wsStatus) => set({ wsStatus }),
+      setOnlineCount: (onlineCount) => set({ onlineCount }),
       setRoom: (roomID, partnerInfo) => set({ 
         roomID, 
         partnerInfo, 
