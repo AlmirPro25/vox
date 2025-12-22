@@ -77,7 +77,7 @@ export function Sidebar({ onLeaveRoom, onUpdateLanguages, onUpdateInterests, onR
                 {showSettings ? 'Close' : 'Edit'}
               </button>
             </div>
-            
+
             {showSettings ? (
               <div className="space-y-4">
                 <LanguageSelector value={nativeLang} onChange={setNativeLang} label="I speak" />
@@ -104,38 +104,60 @@ export function Sidebar({ onLeaveRoom, onUpdateLanguages, onUpdateInterests, onR
 
         {/* Room Info */}
         {status === 'connected' && roomID && partnerInfo && (
-          <div className="card border-green-500/20 bg-green-500/5">
+          <div className="card border-green-500/20 bg-green-500/5 overflow-hidden relative">
+            <div className="absolute top-0 right-0 p-2 opacity-10">
+              <svg className="w-12 h-12" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 10-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 10-2 0h-1a1 1 0 100 2h1a1 1 0 102 0zm-7 5a1 1 0 10-2 0v1a1 1 0 102 0v-1zM5.05 6.464a1 1 0 10-1.414-1.414l-.707.707a1 1 0 101.414 1.414l.707-.707zM5 10a1 1 0 10-2 0H2a1 1 0 100 2h1a1 1 0 102 0zm.757 4.893a1 1 0 101.414-1.414l-.707-.707a1 1 0 10-1.414 1.414l.707.707z" />
+              </svg>
+            </div>
             <p className="label mb-3 text-green-500/70">Connected</p>
-            <div className="space-y-3">
+            <div className="space-y-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-green-500/20 flex items-center justify-center">
-                  <span className="text-green-400 font-bold">{partnerInfo.anonymousId?.slice(3, 5)}</span>
+                <div className="w-10 h-10 rounded-xl bg-green-500/20 flex items-center justify-center border border-green-500/30">
+                  <span className="text-green-400 font-black uppercase text-xs">{partnerInfo.anonymousId?.slice(0, 2)}</span>
                 </div>
                 <div>
-                  <p className="text-sm theme-text font-medium">{partnerInfo.anonymousId}</p>
-                  <p className="text-xs theme-text-muted">
-                    {partnerInfo.country && `🌍 ${partnerInfo.country} • `}
-                    Speaks {partnerInfo.nativeLanguage?.toUpperCase()}
+                  <p className="text-sm theme-text font-black uppercase tracking-tight">{partnerInfo.anonymousId}</p>
+                  <p className="text-[10px] theme-text-muted font-bold uppercase tracking-widest">
+                    {partnerInfo.country && `${partnerInfo.country} • `}
+                    {partnerInfo.nativeLanguage?.toUpperCase()}
                   </p>
                 </div>
               </div>
-              
+
+              {/* Neural Stats */}
+              <div className="pt-3 border-t border-white/5 space-y-2">
+                <p className="text-[9px] font-black text-cyan-500/60 uppercase tracking-[0.2em] mb-2">Neural Stats</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-black/40 p-2 rounded-lg border border-white/5">
+                    <p className="text-[8px] text-gray-500 font-bold uppercase">Latência IA</p>
+                    <p className="text-[10px] font-mono text-cyan-400">0.8s</p>
+                  </div>
+                  <div className="bg-black/40 p-2 rounded-lg border border-white/5">
+                    <p className="text-[8px] text-gray-500 font-bold uppercase">Segurança</p>
+                    <p className="text-[10px] font-mono text-emerald-400">Ativa</p>
+                  </div>
+                </div>
+              </div>
+
               {partnerInfo.commonInterests && partnerInfo.commonInterests.length > 0 && (
                 <div>
-                  <p className="text-[10px] theme-text-muted mb-1">Common interests</p>
-                  <div className="flex flex-wrap gap-1">
+                  <p className="text-[9px] font-black text-purple-500/60 uppercase tracking-[0.1em] mb-1.5">Conexão por Interesses</p>
+                  <div className="flex flex-wrap gap-1.5">
                     {partnerInfo.commonInterests.map(i => (
-                      <span key={i} className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs">{i}</span>
+                      <span key={i} className="px-2 py-0.5 bg-white/5 text-gray-400 border border-white/10 rounded text-[9px] font-bold uppercase tracking-tighter hover:border-cyan-500/50 transition-colors">
+                        {i}
+                      </span>
                     ))}
                   </div>
                 </div>
               )}
 
-              <div className="flex gap-2">
-                <button onClick={onReport} className="flex-1 py-2 text-xs text-yellow-400 hover:bg-yellow-500/10 rounded-lg transition-colors">
+              <div className="flex gap-2 pt-2">
+                <button onClick={onReport} className="flex-1 py-2 text-[10px] font-black uppercase tracking-widest text-yellow-500/70 hover:bg-yellow-500/10 rounded-xl transition-all border border-yellow-500/10">
                   Report
                 </button>
-                <button onClick={onLeaveRoom} className="flex-1 py-2 text-xs text-red-400 hover:bg-red-500/10 rounded-lg transition-colors">
+                <button onClick={onLeaveRoom} className="flex-1 py-2 text-[10px] font-black uppercase tracking-widest text-red-500/70 hover:bg-red-500/10 rounded-xl transition-all border border-red-500/10">
                   Leave
                 </button>
               </div>

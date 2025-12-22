@@ -23,11 +23,17 @@ module.exports = {
       },
       animation: {
         'pulse-glow': 'pulse-glow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'spin-slow': 'spin 8s linear infinite',
+        'spin-reverse-slow': 'spin-reverse 12s linear infinite',
       },
       keyframes: {
         'pulse-glow': {
           '0%, 100%': { opacity: 1, filter: 'brightness(1)' },
           '50%': { opacity: 0.7, filter: 'brightness(1.5)' },
+        },
+        'spin-reverse': {
+          from: { transform: 'rotate(0deg)' },
+          to: { transform: 'rotate(-360deg)' },
         }
       }
     },

@@ -535,21 +535,65 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
         </div>
       )}
 
-      {/* Searching */}
+      {/* Searching - Enhanced Neural Bridge Animation */}
       {status === 'searching' && (
-        <div className="h-full flex items-center justify-center">
-          <div className="text-center px-4">
-            <div className="relative w-28 h-28 mx-auto mb-6">
-              <div className="absolute inset-0 rounded-full border-4 border-cyan-500/20" />
-              <div className="absolute inset-0 rounded-full border-4 border-t-cyan-500 animate-spin" />
-              <div className="absolute inset-4 rounded-full bg-gradient-to-br from-cyan-500/20 to-blue-500/20 flex items-center justify-center">
-                <svg className="w-8 h-8 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
+        <div className="h-full flex items-center justify-center bg-black">
+          <div className="text-center px-4 relative">
+            {/* Global Neural Ring */}
+            <div className="relative w-48 h-48 mx-auto mb-10">
+              <div className="absolute inset-0 rounded-full border border-cyan-500/10 animate-ping" />
+              <div className="absolute inset-2 rounded-full border border-cyan-500/20 animate-pulse" />
+              <div className="absolute inset-0 rounded-full border-2 border-t-cyan-500 border-r-cyan-500/30 animate-spin" />
+              <div className="absolute inset-6 rounded-full border border-blue-500/40 animate-spin-slow" />
+
+              {/* Central Core */}
+              <div className="absolute inset-10 rounded-full bg-gradient-to-br from-cyan-500/20 to-blue-500/20 backdrop-blur-3xl flex items-center justify-center border border-white/10 shadow-[0_0_50px_rgba(6,182,212,0.2)]">
+                <div className="relative">
+                  <svg className="w-10 h-10 text-cyan-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+                  </svg>
+                  <div className="absolute -inset-2 bg-cyan-500/20 blur-xl animate-pulse" />
+                </div>
+              </div>
+
+              {/* Orbital Nodes */}
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="absolute w-2 h-2 bg-cyan-500 rounded-full shadow-[0_0_10px_rgba(6,182,212,0.8)]"
+                  style={{
+                    top: '50%',
+                    left: '50%',
+                    transform: `rotate(${i * 60}deg) translate(24px, -24px)`,
+                    animation: `pulse 2s infinite ${i * 0.3}s`
+                  }}
+                />
+              ))}
+            </div>
+
+            <h2 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500 mb-2 uppercase tracking-tight">
+              Sincronizando Pontes
+            </h2>
+            <div className="flex items-center justify-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-bounce" />
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-bounce [animation-delay:0.2s]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-bounce [animation-delay:0.4s]" />
+              <p className="text-cyan-500/60 text-xs font-black uppercase tracking-[0.2em] ml-2">Mapeando Redes Neurais</p>
+            </div>
+
+            {/* Search HUD */}
+            <div className="mt-12 flex gap-8 justify-center opacity-40">
+              <div className="text-left border-l border-white/10 pl-3">
+                <p className="text-[10px] text-gray-500 font-bold uppercase">Latência</p>
+                <p className="text-xs font-mono text-cyan-400">24ms</p>
+              </div>
+              <div className="text-left border-l border-white/10 pl-3">
+                <p className="text-[10px] text-gray-500 font-bold uppercase">Nós Ativos</p>
+                <p className="text-xs font-mono text-cyan-400">1,204</p>
+              </div>
+              <div className="text-left border-l border-white/10 pl-3">
+                <p className="text-[10px] text-gray-500 font-bold uppercase">Região</p>
+                <p className="text-xs font-mono text-cyan-400">Global</p>
               </div>
             </div>
-            <h2 className="text-xl font-semibold theme-text mb-2">Procurando...</h2>
-            <p className="theme-text-secondary text-sm">Encontrando alguém para conversar</p>
           </div>
         </div>
       )}

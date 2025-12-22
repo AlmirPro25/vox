@@ -45,23 +45,28 @@ func main() {
 	}
 	authService := &services.AuthService{DB: db, JWTSecret: jwtSecret}
 	matchService := &services.MatchService{Redis: rdb}
+	translationService := services.NewTranslationService()
 
 	handler := &controllers.NexusHandler{
 		AuthService:  authService,
 		MatchService: matchService,
 	}
 
+	wsHandler := controllers.NewWSHandler(translationService, matchService, authService)
+	wsHandler.DB = db
+
 	r := gin.Default()
 
 	// Health check
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
+		c.JSON(200, gin.H{"status": "ok", "neural_bridge": translationService != nil})
 	})
 
 	// Public Routes
 	v1 := r.Group("/v1")
 	{
 		v1.POST("/auth/anonymous", handler.HandleAnonymousAuth)
+		v1.GET("/ws", wsHandler.HandleWS)
 	}
 
 	// Private Routes
@@ -75,6 +80,6 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	log.Printf("Starting VOX-BRIDGE server on port %s", port)
+	log.Printf("🌌 VOX-BRIDGE Nexus Core starting on port %s", port)
 	r.Run(":" + port)
 }

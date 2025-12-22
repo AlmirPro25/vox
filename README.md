@@ -1,40 +1,48 @@
 
-# 🌌 VOX-BRIDGE: The Global Nexus
+# 🌌 VOX-BRIDGE Nexus Core
 
-> **"The End of Foreign."**
-> VOX-BRIDGE is an ultra-low latency, AI-mediated communication infrastructure designed to eradicate language barriers through real-time multimodal translation.
+VOX-BRIDGE é uma plataforma de comunicação em tempo real ultrarrápida com tradução neural nativa alimentada por **Google Gemini AI**. O sistema conecta pessoas ao redor do mundo, quebrando barreiras linguísticas instantaneamente através de uma "Ponte Neural" de alta fidelidade.
 
-## 🏛 Architecture & Lore
-Created by **Aurelius, the Architect of the Nexus**, this system operates on a 3-column paradigm:
-1. **Navigation/Filters**: Managing your global identity.
-2. **Video/Focus**: Direct human connection.
-3. **Context/Neural**: Real-time AI translation and cultural context.
+## 💎 Características Premium
 
-Powered by **Gemini 2.0 Flash**, VOX-BRIDGE intercepts audio streams and translates them natively, preserving tone and emotion without the delay of traditional STT/TTS pipelines.
+- **Neural Bridge (v2)**: Tradução bidirecional de chat em tempo real alimentada pelo Gemini 1.5 Flash.
+- **Matchmaking Inteligente**: Algoritmo de busca baseado em interesses comuns e afinidade linguística usando Redis.
+- **Arquitetura Nexus**: Core em Go com transações atômicas e persistência distribuída.
+- **Visualização Imersiva**: Experiência de busca com animações neurais e feedback tátil visual.
+- **Responsividade Extrema**: Layout 50/50 otimizado para mobile e PiP (Picture-in-Picture) dinâmico.
 
-## 🚀 Rapid Deployment
+## 🛠️ Stack Tecnológica
 
-### Prerequisites
+| Camada | Tecnologia |
+| :--- | :--- |
+| **Frontend** | Next.js 14 (App Router), TypeScript, Tailwind CSS, Framer Motion |
+| **Backend** | Go (Gin), WebSockets (Gorilla), gORM |
+| **Inteligência** | Google Gemini AI (Neural Translation Bridge) |
+| **Streaming** | WebRTC (Peer-to-Peer), LiveKit (Bridge Mode) |
+| **Dados** | PostgreSQL (Relacional), Redis (Cache & Queue) |
+| **Infra** | Docker & Docker Compose |
+
+## 🚀 Como Iniciar
+
+### Pré-requisitos
 - Docker & Docker Compose
-- Google Gemini API Key
-- LiveKit Server (or LiveKit Cloud API Key)
+- API Key do Google Gemini (obtenha em [ai.google.dev](https://ai.google.dev))
 
-### Local Forging
-1. Clone the repository.
-2. Configure `.env` (use `.env.example` as base).
-3. Execute the nexus:
+### Setup Rápido
+1. Clone o repositório.
+2. Configure as variáveis de ambiente no arquivo `.env`:
+   ```env
+   GEMINI_API_KEY=sua_chave_aqui
+   JWT_SECRET=sua_chave_secreta_32_chars
+   ```
+3. Inicie o sistema completo:
    ```bash
    docker-compose up --build
    ```
-4. Access the interface: `http://localhost:3000`
+4. Acesse `http://localhost:3000`.
 
-## 🛠 Tech Stack
-- **Backend**: Go (Hexagonal Architecture), WebRTC (LiveKit), Redis (Matchmaking).
-- **Frontend**: Next.js 15 (App Router), Tailwind CSS, Framer Motion.
-- **AI**: Gemini 2.0 Flash Multimodal Live API.
-- **Database**: PostgreSQL (Prisma).
+## 🏛️ Identidade Visual
+A estética do VOX-BRIDGE segue os princípios de **Global Nexus**: minimalismo escuro, acentos neon em Cyan e Emerald, e tipografia técnica monospaçada para dados em tempo real.
 
-## 🛡 Security Manifesto
-- **Zero-Knowledge**: No private audio/video logs are stored.
-- **AES-256-GCM**: Encryption for all metadata.
-- **Neural Moderation**: Real-time AI scanning for safety.
+---
+*Powered by Google Gemini AI • Forged for Global Connection*

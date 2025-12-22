@@ -60,3 +60,16 @@ func (s *AuthService) generateToken(user *models.User) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(s.JWTSecret)
 }
+
+func (s *AuthService) ValidateToken(tokenString string) (*Claims, error) {
+	claims := &Claims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
+		return s.JWTSecret, nil
+	})
+
+	if err != nil || !token.Valid {
+		return nil, errors.New("invalid_token")
+	}
+
+	return claims, nil
+}

@@ -155,6 +155,17 @@ export function TranslationPanel({ onSendMessage, onTyping }: Props) {
                   }
                 `}>
                   <p>{msg.originalText}</p>
+                  {msg.translatedText && msg.translatedText !== msg.originalText && (
+                    <div className={`mt-2 pt-2 border-t ${isMe ? 'border-white/20' : 'border-white/5'} text-[13px] italic opacity-90`}>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <svg className="w-3 h-3 text-cyan-400" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                        </svg>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-cyan-500">Neural Bridge</span>
+                      </div>
+                      <p>{msg.translatedText}</p>
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-1.5 mt-1.5 px-1">
                   <span className={`text-[9px] font-medium uppercase ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
