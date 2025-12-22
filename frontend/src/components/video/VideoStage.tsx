@@ -3,11 +3,16 @@ import { useNexusStore } from '@/store/useNexusStore'
 import { useTheme } from '@/hooks/useTheme'
 
 const ICE_SERVERS: RTCIceServer[] = [
+  // STUN servers
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' },
+  { urls: 'stun:stun4.l.google.com:19302' },
+  // TURN servers (múltiplos para redundância)
   { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
   { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turns:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
 ]
 
 type ViewMode = 'default' | 'split' | 'fullscreen-local' | 'fullscreen-remote'
@@ -103,7 +108,19 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
 
     pc.oniceconnectionstatechange = () => {
       console.log('🧊 ICE state:', pc.iceConnectionState)
-      if (pc.iceConnectionState === 'failed') pc.restartIce()
+      if (pc.iceConnectionState === 'failed') {
+        console.log('🔄 ICE failed, restarting...')
+        pc.restartIce()
+      }
+      // Timeout se ficar muito tempo em checking
+      if (pc.iceConnectionState === 'checking') {
+        setTimeout(() => {
+          if (pc.iceConnectionState === 'checking') {
+            console.log('⚠️ ICE checking timeout, restarting...')
+            pc.restartIce()
+          }
+        }, 10000) // 10 segundos
+      }
     }
 
     pc.onsignalingstatechange = () => { isNegotiating.current = pc.signalingState !== 'stable' }
