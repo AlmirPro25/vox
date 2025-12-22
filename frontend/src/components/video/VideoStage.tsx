@@ -183,13 +183,23 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   // Iniciar chamada quando status muda pra connected
   useEffect(() => {
     if (status === 'connected') {
-      console.log('🎯 Status connected, will start WebRTC in 1s...')
-      const timer = setTimeout(() => startCall(), 1000)
-      return () => clearTimeout(timer)
+      // Só inicia se for o initiator (determinado no match)
+      const isInitiator = (window as any).__isWebRTCInitiator
+      console.log('🎯 Status connected, isInitiator:', isInitiator)
+      
+      if (isInitiator) {
+        console.log('📞 Will start call as INITIATOR in 1.5s...')
+        const timer = setTimeout(() => startCall(), 1500)
+        return () => clearTimeout(timer)
+      } else {
+        console.log('⏳ Waiting for offer as RESPONDER...')
+        // Só inicia a mídia local pra estar pronto quando receber offer
+        startMedia()
+      }
     } else {
       endCall()
     }
-  }, [status, startCall, endCall])
+  }, [status, startCall, endCall, startMedia])
 
   // Cleanup
   useEffect(() => () => endCall(), [endCall])

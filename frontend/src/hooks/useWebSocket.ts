@@ -53,7 +53,12 @@ export function useWebSocket() {
             setStatus('idle')
             break
           case 'matched':
-            // Match encontrado!
+            // Match encontrado! Determinar quem inicia o WebRTC
+            // O usuário com ID menor inicia a chamada
+            const myId = useNexusStore.getState().user?.id || ''
+            const partnerId = payload.partner?.odId || payload.partner?.anonymousId || ''
+            const isInitiator = myId < partnerId
+            
             setRoom(payload.roomId, {
               anonymousId: payload.partner?.odId || payload.partner?.anonymousId,
               nativeLanguage: payload.partner?.nativeLanguage,
@@ -62,6 +67,10 @@ export function useWebSocket() {
             })
             setStatus('connected')
             playConnect()
+            
+            // Guardar se é initiator pra usar no VideoStage
+            ;(window as any).__isWebRTCInitiator = isInitiator
+            console.log('🎯 WebRTC role:', isInitiator ? 'INITIATOR' : 'RESPONDER')
             break
           case 'chat_message':
             addMessage({
