@@ -1,15 +1,19 @@
-# Simple Dockerfile for Render
-FROM golang:1.21-alpine AS builder
+FROM golang:1.21-alpine
 
 WORKDIR /app
-COPY go.mod ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o server src/main_dev.go
 
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates tzdata
-WORKDIR /root/
-COPY --from=builder /app/server .
+# Copiar arquivos de dependência
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copiar código fonte
+COPY src/ ./src/
+
+# Build
+RUN go build -o server src/main_dev.go
+
+# Expor porta
 EXPOSE 8080
+
+# Rodar
 CMD ["./server"]
