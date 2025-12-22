@@ -135,6 +135,7 @@ export function useWebSocket() {
   }, [])
 
   return {
+    socket: wsRef.current,
     connect,
     joinQueue,
     leaveQueue,

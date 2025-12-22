@@ -102,7 +102,7 @@ export default function NexusApp() {
       <MobileHeader onLeaveRoom={handleLeaveRoom} onReport={() => setShowReport(true)} />
 
       <Column width="flex-1" className={`relative border-x theme-border ${mobileTab !== 'main' ? 'hidden md:block' : ''}`}>
-        <VideoStage />
+        <VideoStage ws={wsRef.current.socket} />
         
         {status === 'idle' && (
           <div className="absolute inset-0 z-20 flex items-center justify-center p-4">

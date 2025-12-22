@@ -63,6 +63,21 @@ function handleMessage(user, msg) {
     case 'chat_message': sendChatMessage(user, msg.payload); break;
     case 'typing': sendTyping(user, msg.payload); break;
     case 'leave_room': leaveRoom(user); break;
+    // WebRTC Signaling
+    case 'webrtc_offer': forwardToPartner(user, 'webrtc_offer', msg.payload); break;
+    case 'webrtc_answer': forwardToPartner(user, 'webrtc_answer', msg.payload); break;
+    case 'webrtc_ice': forwardToPartner(user, 'webrtc_ice', msg.payload); break;
+  }
+}
+
+// Forward WebRTC signals to partner
+function forwardToPartner(user, type, payload) {
+  if (!user.roomId) return;
+  const room = rooms.get(user.roomId);
+  if (!room) return;
+  const partner = room.find(u => u.id !== user.id);
+  if (partner && partner.ws.readyState === WebSocket.OPEN) {
+    partner.ws.send(JSON.stringify({ type, payload }));
   }
 }
 
