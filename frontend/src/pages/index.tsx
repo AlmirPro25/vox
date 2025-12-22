@@ -7,21 +7,20 @@ import { MobileHeader } from '@/components/nav/MobileHeader'
 import { ReportModal } from '@/components/ui/ReportModal'
 import { useNexusStore } from '@/store/useNexusStore'
 import { useWebSocket } from '@/hooks/useWebSocket'
-import axios from 'axios'
 
 export default function NexusApp() {
   const { setUser, setToken, setStatus, status, user, token, partnerInfo } = useNexusStore()
-  const [mobileTab, setMobileTab] = useState<'main' | 'chat'>('main')
+  const [mobileTab, setMobileTab] = useState<'video' | 'chat'>('video')
   const [showReport, setShowReport] = useState(false)
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState(true)
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(true)
   const ws = useWebSocket()
   const wsRef = useRef(ws)
   wsRef.current = ws
 
   useEffect(() => {
-    // Conectar direto no WebSocket (sem auth)
     const savedUser = useNexusStore.getState().user
     const anonId = savedUser?.anonymousId || `NX-${Math.random().toString(36).substr(2, 9).toUpperCase()}`
-    
     setUser({
       id: anonId,
       anonymousId: anonId,
@@ -35,8 +34,10 @@ export default function NexusApp() {
     wsRef.current.connect()
   }, [setUser, setToken])
 
+  // Mobile: ir pro chat quando conectar
   useEffect(() => {
     if (status === 'connected') setMobileTab('chat')
+    if (status === 'idle') setMobileTab('video')
   }, [status])
 
   const handleStartMatch = () => {
@@ -52,24 +53,18 @@ export default function NexusApp() {
 
   const handleLeaveRoom = () => {
     wsRef.current.leaveRoom()
-    setMobileTab('main')
+    setMobileTab('video')
   }
 
-  // Função Next - sai da sala atual e procura outra pessoa
   const handleNext = () => {
     wsRef.current.leaveRoom()
-    // Pequeno delay e volta a procurar
     setTimeout(() => {
       setStatus('searching')
       wsRef.current.joinQueue()
     }, 500)
   }
 
-  // Função para enviar sinais WebRTC pelo WebSocket principal
-  const sendSignal = (type: string, payload: any) => {
-    wsRef.current.send(type, payload)
-  }
-
+  const sendSignal = (type: string, payload: any) => wsRef.current.send(type, payload)
   const handleSendMessage = (message: string) => wsRef.current.sendChat(message)
   const handleTyping = () => wsRef.current.sendTyping()
 
@@ -90,58 +85,93 @@ export default function NexusApp() {
 
   return (
     <NexusGrid activeTab={mobileTab} onTabChange={setMobileTab}>
-      <Column width="w-72" mobileHidden>
+      {/* Left Sidebar - Desktop */}
+      <div className={`hidden md:flex flex-col transition-all duration-300 ${leftSidebarOpen ? 'w-72' : 'w-0'} overflow-hidden`}>
         <Sidebar 
           onLeaveRoom={handleLeaveRoom} 
           onUpdateLanguages={handleUpdateLanguages}
           onUpdateInterests={handleUpdateInterests}
           onReport={() => setShowReport(true)}
         />
-      </Column>
+      </div>
 
+      {/* Toggle Left Sidebar Button */}
+      <button 
+        onClick={() => setLeftSidebarOpen(!leftSidebarOpen)}
+        className="hidden md:flex absolute left-0 top-1/2 -translate-y-1/2 z-50 w-6 h-16 items-center justify-center rounded-r-lg transition-all hover:bg-white/10"
+        style={{ 
+          left: leftSidebarOpen ? '288px' : '0',
+          background: 'rgba(0,0,0,0.5)',
+          backdropFilter: 'blur(8px)'
+        }}
+      >
+        <svg className={`w-4 h-4 text-white transition-transform ${leftSidebarOpen ? '' : 'rotate-180'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+        </svg>
+      </button>
+
+      {/* Mobile Header */}
       <MobileHeader onLeaveRoom={handleLeaveRoom} onReport={() => setShowReport(true)} />
 
-      <Column width="flex-1" className={`relative border-x theme-border ${mobileTab !== 'main' ? 'hidden md:block' : ''}`}>
+      {/* Main Video Area */}
+      <Column width="flex-1" className={`relative ${mobileTab !== 'video' ? 'hidden md:block' : ''}`}>
         <VideoStage onNext={handleNext} onLeave={handleLeaveRoom} sendSignal={sendSignal} />
         
+        {/* Start Button Overlay */}
         {status === 'idle' && (
           <div className="absolute inset-0 z-20 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
             <div className="relative text-center">
               <button 
                 onClick={handleStartMatch}
-                className="group relative px-8 md:px-12 py-4 md:py-5 bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-bold rounded-2xl shadow-2xl shadow-cyan-500/30 hover:shadow-cyan-500/50 hover:scale-105 active:scale-95 transition-all duration-300 uppercase tracking-widest text-xs md:text-sm"
+                className="group relative px-10 py-5 bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-bold rounded-2xl shadow-2xl shadow-cyan-500/30 hover:shadow-cyan-500/50 hover:scale-105 active:scale-95 transition-all duration-300"
               >
-                <span className="relative z-10 flex items-center gap-2 md:gap-3">
-                  <svg className="w-4 h-4 md:w-5 md:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <span className="relative z-10 flex items-center gap-3 text-lg">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                   </svg>
-                  Start Bridge
+                  Iniciar
                 </span>
               </button>
-              <p className="text-center theme-text-muted text-xs mt-4 px-4">
-                Find a partner who speaks your target language
-              </p>
+              <p className="text-white/70 text-sm mt-4">Encontre alguém para conversar</p>
             </div>
           </div>
         )}
 
+        {/* Cancel Button */}
         {status === 'searching' && (
-          <div className="absolute bottom-20 md:bottom-8 left-1/2 -translate-x-1/2 z-20">
-            <button onClick={handleStopMatch} className="btn-secondary text-sm flex items-center gap-2">
+          <div className="absolute bottom-24 md:bottom-8 left-1/2 -translate-x-1/2 z-20">
+            <button onClick={handleStopMatch} className="px-6 py-3 bg-white/10 hover:bg-white/20 backdrop-blur-sm text-white rounded-full text-sm font-medium flex items-center gap-2 transition-all">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
-              Cancel
+              Cancelar
             </button>
           </div>
         )}
       </Column>
 
-      <Column width="w-80" className={`${mobileTab !== 'chat' ? 'hidden md:block' : 'pb-16 md:pb-0'}`}>
-        <TranslationPanel onSendMessage={handleSendMessage} onTyping={handleTyping} />
-      </Column>
+      {/* Toggle Right Sidebar Button */}
+      <button 
+        onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
+        className="hidden md:flex absolute right-0 top-1/2 -translate-y-1/2 z-50 w-6 h-16 items-center justify-center rounded-l-lg transition-all hover:bg-white/10"
+        style={{ 
+          right: rightSidebarOpen ? '320px' : '0',
+          background: 'rgba(0,0,0,0.5)',
+          backdropFilter: 'blur(8px)'
+        }}
+      >
+        <svg className={`w-4 h-4 text-white transition-transform ${rightSidebarOpen ? '' : 'rotate-180'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+      </button>
 
+      {/* Right Sidebar - Chat */}
+      <div className={`${mobileTab !== 'chat' ? 'hidden md:block' : 'pb-16 md:pb-0'} transition-all duration-300 ${rightSidebarOpen ? 'md:w-80' : 'md:w-0'} md:overflow-hidden`}>
+        <TranslationPanel onSendMessage={handleSendMessage} onTyping={handleTyping} />
+      </div>
+
+      {/* Report Modal */}
       {showReport && partnerInfo && (
         <ReportModal 
           partnerName={partnerInfo.anonymousId} 
