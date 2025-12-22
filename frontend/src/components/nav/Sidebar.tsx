@@ -14,8 +14,8 @@ interface Props {
 export function Sidebar({ onLeaveRoom, onUpdateLanguages, onUpdateInterests, onReport }: Props) {
   const { user, status, partnerInfo, roomID } = useNexusStore()
   const [showSettings, setShowSettings] = useState(false)
-  const [nativeLang, setNativeLang] = useState(user?.nativeLanguage || 'pt')
-  const [targetLang, setTargetLang] = useState(user?.targetLanguage || 'en')
+  const [nativeLang, setNativeLang] = useState<string>(user?.nativeLanguage || 'pt')
+  const [targetLang, setTargetLang] = useState<string>(user?.targetLanguage || 'en')
   const [interests, setInterests] = useState<string[]>(user?.interests || [])
 
   const handleSave = () => {
