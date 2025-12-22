@@ -1,18 +1,13 @@
-# Render Blueprint - Backend deployment
-# https://render.com/docs/blueprint-spec
-
 services:
   - type: web
-    name: vox-bridge-api
-    runtime: go
+    name: vox-api
+    runtime: node
     plan: free
-    rootDir: backend
-    buildCommand: go build -o server src/main_dev.go
-    startCommand: ./server
+    rootDir: backend-node
+    buildCommand: npm install
+    startCommand: npm start
     envVars:
       - key: PORT
         value: 8080
-      - key: JWT_SECRET
-        generateValue: true
     healthCheckPath: /health
     autoDeploy: true
