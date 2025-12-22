@@ -127,13 +127,37 @@ function joinQueue(user, payload) {
     user.country = payload.country || 'BR';
   }
   
-  // Procurar match
-  const matchIdx = queue.findIndex(q => q.id !== user.id);
+  // Procurar match com compatibilidade de idioma
+  // Prioridade: 1) Idioma alvo = idioma nativo do parceiro (e vice-versa)
+  //             2) Mesmo idioma alvo
+  //             3) Qualquer pessoa
+  const matchIdx = queue.findIndex(q => {
+    if (q.id === user.id) return false;
+    
+    // Match perfeito: eu quero aprender o idioma nativo dele, ele quer aprender o meu
+    const perfectMatch = (
+      user.targetLanguage === q.nativeLanguage && 
+      q.targetLanguage === user.nativeLanguage
+    );
+    if (perfectMatch) return true;
+    
+    // Match bom: mesmo idioma alvo (podem praticar juntos)
+    const sameTarget = user.targetLanguage === q.targetLanguage;
+    if (sameTarget) return true;
+    
+    // Se não tem ninguém compatível há mais de 30 segundos, aceita qualquer um
+    const waitTime = Date.now() - (user.queueJoinTime || Date.now());
+    if (waitTime > 30000) return true;
+    
+    return false;
+  });
+  
   if (matchIdx >= 0) {
     const partner = queue.splice(matchIdx, 1)[0];
     createRoom(user, partner);
   } else {
     if (!queue.find(q => q.id === user.id)) {
+      user.queueJoinTime = Date.now();
       queue.push(user);
       user.ws.send(JSON.stringify({ type: 'queue_joined', payload: { position: queue.length } }));
     }

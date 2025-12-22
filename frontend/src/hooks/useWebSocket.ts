@@ -213,7 +213,15 @@ export function useWebSocket() {
     }
   }, [])
 
-  const joinQueue = useCallback(() => send('join_queue'), [send])
+  const joinQueue = useCallback(() => {
+    const user = useNexusStore.getState().user
+    send('join_queue', {
+      nativeLanguage: user?.nativeLanguage || 'pt',
+      targetLanguage: user?.targetLanguage || 'en',
+      interests: user?.interests || [],
+      country: user?.country || 'BR'
+    })
+  }, [send])
   const leaveQueue = useCallback(() => send('leave_queue'), [send])
   const leaveRoom = useCallback(() => send('leave_room'), [send])
   

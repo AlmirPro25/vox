@@ -90,7 +90,18 @@ export function TranslationPanel({ onSendMessage, onTyping }: Props) {
             </div>
             <div className="flex-1 min-w-0">
               <p className="font-medium text-green-500 text-sm truncate">{partnerInfo.anonymousId}</p>
-              <p className="text-xs" style={{ color: isDark ? '#666' : '#888' }}>Online</p>
+              <div className="flex items-center gap-2">
+                {partnerInfo.nativeLanguage && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400">
+                    Fala {partnerInfo.nativeLanguage?.toUpperCase()}
+                  </span>
+                )}
+                {partnerInfo.commonInterests && partnerInfo.commonInterests.length > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">
+                    {partnerInfo.commonInterests.length} interesse{partnerInfo.commonInterests.length > 1 ? 's' : ''} em comum
+                  </span>
+                )}
+              </div>
             </div>
             <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
           </div>
