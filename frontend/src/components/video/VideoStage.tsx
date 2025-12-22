@@ -3,24 +3,16 @@ import { useNexusStore } from '@/store/useNexusStore'
 import { useTheme } from '@/hooks/useTheme'
 
 const ICE_SERVERS = [
+  // STUN servers (gratuitos)
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
-  // TURN servers gratuitos (Metered)
+  { urls: 'stun:stun3.l.google.com:19302' },
+  // TURN gratuito - ExpressTURN (funciona!)
   {
-    urls: 'turn:a.relay.metered.ca:80',
-    username: 'e8dd65c92f6f1f2d5c67c7a3',
-    credential: 'kW3QfUZKpLqYhDzS'
-  },
-  {
-    urls: 'turn:a.relay.metered.ca:443',
-    username: 'e8dd65c92f6f1f2d5c67c7a3',
-    credential: 'kW3QfUZKpLqYhDzS'
-  },
-  {
-    urls: 'turn:a.relay.metered.ca:443?transport=tcp',
-    username: 'e8dd65c92f6f1f2d5c67c7a3',
-    credential: 'kW3QfUZKpLqYhDzS'
+    urls: 'turn:relay1.expressturn.com:3478',
+    username: 'efQGKXSNKHPVYHCHJT',
+    credential: 'aGJXNmVhbWRzYnFi'
   },
 ]
 
@@ -91,25 +83,31 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
     }
     
     console.log('🔗 Creating PeerConnection...')
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
+    const pc = new RTCPeerConnection({ 
+      iceServers: ICE_SERVERS,
+      iceCandidatePoolSize: 10
+    })
     
     pc.onicecandidate = (e) => {
       if (e.candidate && sendSignal) {
-        console.log('🧊 Sending ICE candidate')
+        console.log('🧊 Sending ICE candidate:', e.candidate.type, e.candidate.protocol)
         sendSignal('webrtc_ice', { candidate: e.candidate.toJSON() })
+      } else if (!e.candidate) {
+        console.log('🧊 ICE gathering complete')
       }
+    }
+    
+    pc.onicegatheringstatechange = () => {
+      console.log('🧊 ICE gathering state:', pc.iceGatheringState)
     }
     
     pc.ontrack = (e) => {
       console.log('📺 Received remote track!', e.track.kind)
-      if (remoteVideoRef.current && e.streams[0]) {
-        // Evitar setar o mesmo stream
-        if (remoteVideoRef.current.srcObject !== e.streams[0]) {
-          remoteVideoRef.current.srcObject = e.streams[0]
-        }
-        // Usar evento loadedmetadata pra dar play
-        remoteVideoRef.current.onloadedmetadata = () => {
-          remoteVideoRef.current?.play().catch(err => console.log('Play error:', err))
+      const remoteVideo = remoteVideoRef.current
+      if (remoteVideo && e.streams[0]) {
+        // Só setar se for diferente
+        if (remoteVideo.srcObject !== e.streams[0]) {
+          remoteVideo.srcObject = e.streams[0]
         }
         setRemoteConnected(true)
       }
