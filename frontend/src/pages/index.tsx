@@ -55,6 +55,16 @@ export default function NexusApp() {
     setMobileTab('main')
   }
 
+  // Função Next - sai da sala atual e procura outra pessoa
+  const handleNext = () => {
+    wsRef.current.leaveRoom()
+    // Pequeno delay e volta a procurar
+    setTimeout(() => {
+      setStatus('searching')
+      wsRef.current.joinQueue()
+    }, 500)
+  }
+
   const handleSendMessage = (message: string) => wsRef.current.sendChat(message)
   const handleTyping = () => wsRef.current.sendTyping()
 
@@ -87,7 +97,7 @@ export default function NexusApp() {
       <MobileHeader onLeaveRoom={handleLeaveRoom} onReport={() => setShowReport(true)} />
 
       <Column width="flex-1" className={`relative border-x theme-border ${mobileTab !== 'main' ? 'hidden md:block' : ''}`}>
-        <VideoStage ws={wsRef.current.socket} />
+        <VideoStage onNext={handleNext} onLeave={handleLeaveRoom} />
         
         {status === 'idle' && (
           <div className="absolute inset-0 z-20 flex items-center justify-center p-4">
