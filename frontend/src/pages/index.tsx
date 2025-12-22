@@ -7,9 +7,11 @@ import { MobileHeader } from '@/components/nav/MobileHeader'
 import { ReportModal } from '@/components/ui/ReportModal'
 import { useNexusStore } from '@/store/useNexusStore'
 import { useWebSocket } from '@/hooks/useWebSocket'
+import { useTheme } from '@/hooks/useTheme'
 
 export default function NexusApp() {
   const { setUser, setToken, setStatus, status, user, token, partnerInfo } = useNexusStore()
+  const { theme } = useTheme()
   const [mobileTab, setMobileTab] = useState<'video' | 'chat'>('video')
   const [showReport, setShowReport] = useState(false)
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true)
@@ -34,9 +36,9 @@ export default function NexusApp() {
     wsRef.current.connect()
   }, [setUser, setToken])
 
-  // Mobile: ir pro chat quando conectar
+  // Mobile: ficar na câmera (não ir pro chat automaticamente)
   useEffect(() => {
-    if (status === 'connected') setMobileTab('chat')
+    // Não mudar automaticamente - usuário decide
     if (status === 'idle') setMobileTab('video')
   }, [status])
 
@@ -167,7 +169,8 @@ export default function NexusApp() {
       </button>
 
       {/* Right Sidebar - Chat */}
-      <div className={`${mobileTab !== 'chat' ? 'hidden md:block' : 'pb-16 md:pb-0'} transition-all duration-300 ${rightSidebarOpen ? 'md:w-80' : 'md:w-0'} md:overflow-hidden`}>
+      <div className={`${mobileTab !== 'chat' ? 'hidden md:block' : 'fixed inset-0 z-40 pt-14 pb-16 md:relative md:inset-auto md:pt-0 md:pb-0 md:z-auto'} transition-all duration-300 ${rightSidebarOpen ? 'md:w-80' : 'md:w-0'} md:overflow-hidden`}
+        style={{ background: theme === 'dark' ? '#0a0a0a' : '#fff' }}>
         <TranslationPanel onSendMessage={handleSendMessage} onTyping={handleTyping} />
       </div>
 
