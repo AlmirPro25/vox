@@ -148,16 +148,14 @@ export function useWebSocket() {
               playDisconnect()
               break
             case 'webrtc_offer':
-              if (!(window as any).__isWebRTCInitiator) {
-                console.log('📥 Processing offer as RESPONDER')
-                ;(window as any).__webrtc?.handleOffer?.(payload.sdp)
-              }
+              // Perfect Negotiation: ambos podem receber offers
+              console.log('📥 Received offer')
+              ;(window as any).__webrtc?.handleOffer?.(payload.sdp)
               break
             case 'webrtc_answer':
-              if ((window as any).__isWebRTCInitiator) {
-                console.log('📥 Processing answer as INITIATOR')
-                ;(window as any).__webrtc?.handleAnswer?.(payload.sdp)
-              }
+              // Perfect Negotiation: ambos podem receber answers
+              console.log('📥 Received answer')
+              ;(window as any).__webrtc?.handleAnswer?.(payload.sdp)
               break
             case 'webrtc_ice':
               ;(window as any).__webrtc?.handleIce?.(payload.candidate)

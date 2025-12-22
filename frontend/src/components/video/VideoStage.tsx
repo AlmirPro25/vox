@@ -2,12 +2,15 @@ import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { useNexusStore } from '@/store/useNexusStore'
 import { useTheme } from '@/hooks/useTheme'
 
+// Múltiplos servidores STUN/TURN para máxima conectividade
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
   { urls: 'stun:stun3.l.google.com:19302' },
   { urls: 'stun:stun4.l.google.com:19302' },
+  { urls: 'stun:stun.stunprotocol.org:3478' },
+  // TURN servers (relay para NAT restritivo)
   { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
   { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
   { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
@@ -26,17 +29,22 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   const { status, partnerInfo } = useNexusStore()
   const { theme } = useTheme()
   
+  // Refs
   const localVideoRef = useRef<HTMLVideoElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
-  const pendingIceCandidates = useRef<RTCIceCandidateInit[]>([])
-  const isNegotiating = useRef(false)
+  const makingOffer = useRef(false)
+  const ignoreOffer = useRef(false)
+  const isSettingRemoteAnswer = useRef(false)
+  const pendingCandidates = useRef<RTCIceCandidateInit[]>([])
   const reconnectAttempts = useRef(0)
   const statsInterval = useRef<NodeJS.Timeout | null>(null)
+  const connectionTimeout = useRef<NodeJS.Timeout | null>(null)
   
-  const [cameraOn, setCameraOn] = useState(false)
-  const [micOn, setMicOn] = useState(false)
+  // State
+  const [cameraOn, setCameraOn] = useState(true)
+  const [micOn, setMicOn] = useState(true)
   const [remoteConnected, setRemoteConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [connectionState, setConnectionState] = useState<string>('new')
@@ -45,28 +53,36 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   const [quality, setQuality] = useState<ConnectionQuality>('disconnected')
   const [isReconnecting, setIsReconnecting] = useState(false)
 
-  const bgStyle = { background: theme === 'dark' ? '#0a0a0a' : '#f1f5f9' }
 
-  // Monitorar qualidade da conexão
+  const bgStyle = { background: theme === 'dark' ? '#0a0a0a' : '#f1f5f9' }
+  
+  // Determinar se somos "polite" (responder) ou "impolite" (iniciador)
+  // Perfect Negotiation: polite peer cede em caso de conflito
+  const isPolite = useCallback(() => !(window as any).__isWebRTCInitiator, [])
+
+  // Monitor de qualidade
   const startQualityMonitor = useCallback(() => {
     if (statsInterval.current) clearInterval(statsInterval.current)
     statsInterval.current = setInterval(async () => {
       const pc = pcRef.current
-      if (!pc) return
+      if (!pc || pc.connectionState !== 'connected') return
       try {
         const stats = await pc.getStats()
-        let packetsLost = 0, packetsReceived = 0
+        let packetsLost = 0, packetsReceived = 0, rtt = 0
         stats.forEach(report => {
           if (report.type === 'inbound-rtp' && report.kind === 'video') {
             packetsLost = report.packetsLost || 0
             packetsReceived = report.packetsReceived || 0
           }
+          if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+            rtt = report.currentRoundTripTime || 0
+          }
         })
         const lossRate = packetsReceived > 0 ? packetsLost / packetsReceived : 0
-        if (lossRate < 0.01) setQuality('excellent')
-        else if (lossRate < 0.05) setQuality('good')
+        if (lossRate < 0.01 && rtt < 0.15) setQuality('excellent')
+        else if (lossRate < 0.05 && rtt < 0.3) setQuality('good')
         else setQuality('poor')
-      } catch (e) { /* ignore */ }
+      } catch { /* ignore */ }
     }, 3000)
   }, [])
 
@@ -75,35 +91,41 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
     setQuality('disconnected')
   }, [])
 
-  // Tentar só áudio se vídeo falhar
-  const startMedia = useCallback(async (videoEnabled = true) => {
+  // Obter mídia local
+  const startMedia = useCallback(async (videoEnabled = true): Promise<MediaStream | null> => {
     try {
+      // Se já tem stream, retorna
+      if (localStreamRef.current) return localStreamRef.current
+      
       console.log('📹 Requesting media...', videoEnabled ? 'video+audio' : 'audio only')
       const constraints = videoEnabled 
-        ? { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, audio: true }
-        : { video: false, audio: true }
+        ? { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, audio: { echoCancellation: true, noiseSuppression: true } }
+        : { video: false, audio: { echoCancellation: true, noiseSuppression: true } }
+      
       const stream = await navigator.mediaDevices.getUserMedia(constraints)
       localStreamRef.current = stream
+      
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream
-        await localVideoRef.current.play().catch(() => {})
+        localVideoRef.current.play().catch(() => {})
       }
+      
       setCameraOn(videoEnabled && stream.getVideoTracks().length > 0)
       setMicOn(stream.getAudioTracks().length > 0)
       setError(null)
-      console.log('✅ Media started')
+      console.log('✅ Media started:', stream.getTracks().map(t => t.kind).join(', '))
       return stream
     } catch (err: any) {
-      console.error('❌ Media error:', err)
-      // Fallback para só áudio
+      console.error('❌ Media error:', err.name, err.message)
       if (videoEnabled) {
         console.log('⚠️ Video failed, trying audio only...')
         return startMedia(false)
       }
-      setError('Permita acesso ao microfone')
+      setError('Permita acesso à câmera/microfone')
       return null
     }
   }, [])
+
 
   const stopMedia = useCallback(() => {
     localStreamRef.current?.getTracks().forEach(t => t.stop())
@@ -113,71 +135,82 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
     setMicOn(false)
   }, [])
 
-  // Reconexão automática
-  const attemptReconnect = useCallback(async () => {
-    if (reconnectAttempts.current >= 3) {
-      console.log('❌ Max reconnect attempts reached')
-      setError('Conexão perdida. Clique em Próximo.')
-      return
+  // Criar PeerConnection com Perfect Negotiation
+  const createPeerConnection = useCallback(() => {
+    if (pcRef.current) {
+      pcRef.current.close()
+      pcRef.current = null
     }
-    reconnectAttempts.current++
-    setIsReconnecting(true)
-    console.log(`🔄 Reconnecting... attempt ${reconnectAttempts.current}`)
     
-    // Fechar conexão atual
-    pcRef.current?.close()
-    pcRef.current = null
-    pendingIceCandidates.current = []
+    console.log('🔗 Creating PeerConnection (polite:', isPolite(), ')')
+    const pc = new RTCPeerConnection({ 
+      iceServers: ICE_SERVERS, 
+      iceCandidatePoolSize: 10,
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require'
+    })
     
-    // Esperar um pouco e tentar novamente
-    await new Promise(r => setTimeout(r, 2000))
-    
-    const isInitiator = (window as any).__isWebRTCInitiator
-    if (isInitiator) {
-      await startCall()
-    }
-    setIsReconnecting(false)
-  }, [])
-
-  const createPC = useCallback(() => {
-    if (pcRef.current) { pcRef.current.close(); pcRef.current = null }
-    console.log('🔗 Creating PeerConnection...')
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS, iceCandidatePoolSize: 10 })
-    
-    pc.onicecandidate = (e) => {
-      if (e.candidate && sendSignal) {
-        sendSignal('webrtc_ice', { candidate: e.candidate.toJSON() })
+    // ICE Candidate
+    pc.onicecandidate = ({ candidate }) => {
+      if (candidate && sendSignal) {
+        console.log('🧊 Sending ICE candidate')
+        sendSignal('webrtc_ice', { candidate: candidate.toJSON() })
       }
     }
     
-    pc.ontrack = (e) => {
-      console.log('📺 Received remote track!', e.track.kind)
-      if (remoteVideoRef.current && e.streams[0] && !remoteVideoRef.current.srcObject) {
-        remoteVideoRef.current.srcObject = e.streams[0]
+    pc.onicecandidateerror = (e) => {
+      console.warn('🧊 ICE candidate error:', e)
+    }
+    
+    // Track recebido
+    pc.ontrack = ({ track, streams }) => {
+      console.log('📺 Received track:', track.kind)
+      if (remoteVideoRef.current && streams[0]) {
+        remoteVideoRef.current.srcObject = streams[0]
+        remoteVideoRef.current.play().catch(() => {})
         setRemoteConnected(true)
-        reconnectAttempts.current = 0 // Reset on success
+        reconnectAttempts.current = 0
         startQualityMonitor()
       }
     }
     
+    // Perfect Negotiation: onnegotiationneeded
+    pc.onnegotiationneeded = async () => {
+      try {
+        console.log('🔄 Negotiation needed')
+        makingOffer.current = true
+        await pc.setLocalDescription()
+        console.log('📤 Sending offer')
+        sendSignal?.('webrtc_offer', { sdp: pc.localDescription?.toJSON() })
+      } catch (err) {
+        console.error('❌ Negotiation error:', err)
+      } finally {
+        makingOffer.current = false
+      }
+    }
+    
+    // Connection state
     pc.onconnectionstatechange = () => {
       console.log('🔄 Connection state:', pc.connectionState)
       setConnectionState(pc.connectionState)
       
       if (pc.connectionState === 'connected') {
         setRemoteConnected(true)
-        isNegotiating.current = false
         setQuality('good')
+        if (connectionTimeout.current) {
+          clearTimeout(connectionTimeout.current)
+          connectionTimeout.current = null
+        }
       }
       
       if (pc.connectionState === 'disconnected') {
         setQuality('poor')
-        // Tentar reconectar após 3 segundos
+        // Aguardar 5s antes de tentar reconectar
         setTimeout(() => {
           if (pcRef.current?.connectionState === 'disconnected') {
             attemptReconnect()
           }
-        }, 3000)
+        }, 5000)
       }
       
       if (pc.connectionState === 'failed') {
@@ -186,110 +219,237 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
         attemptReconnect()
       }
     }
-
+    
+    // ICE connection state
     pc.oniceconnectionstatechange = () => {
       console.log('🧊 ICE state:', pc.iceConnectionState)
       if (pc.iceConnectionState === 'failed') {
         console.log('🔄 ICE failed, restarting...')
         pc.restartIce()
       }
-      if (pc.iceConnectionState === 'checking') {
-        setTimeout(() => {
-          if (pc.iceConnectionState === 'checking') {
-            console.log('⚠️ ICE timeout, restarting...')
-            pc.restartIce()
-          }
-        }, 15000)
-      }
     }
-
-    pc.onsignalingstatechange = () => { isNegotiating.current = pc.signalingState !== 'stable' }
+    
+    pc.onicegatheringstatechange = () => {
+      console.log('🧊 ICE gathering:', pc.iceGatheringState)
+    }
+    
     pcRef.current = pc
     return pc
-  }, [sendSignal, startQualityMonitor, attemptReconnect])
+  }, [sendSignal, isPolite, startQualityMonitor])
 
-  const startCall = useCallback(async () => {
-    if (isNegotiating.current) return
-    isNegotiating.current = true
-    console.log('📞 Starting call...')
+
+  // Reconexão automática
+  const attemptReconnect = useCallback(async () => {
+    if (reconnectAttempts.current >= 3) {
+      console.log('❌ Max reconnect attempts reached')
+      setError('Conexão perdida. Clique em Próximo.')
+      setIsReconnecting(false)
+      return
+    }
+    
+    reconnectAttempts.current++
+    setIsReconnecting(true)
+    console.log(`🔄 Reconnecting... attempt ${reconnectAttempts.current}/3`)
+    
+    // Fechar conexão atual
+    pcRef.current?.close()
+    pcRef.current = null
+    pendingCandidates.current = []
+    makingOffer.current = false
+    ignoreOffer.current = false
+    
+    await new Promise(r => setTimeout(r, 1000))
+    
+    // Reiniciar
+    await initializeConnection()
+    setIsReconnecting(false)
+  }, [])
+
+  // Inicializar conexão
+  const initializeConnection = useCallback(async () => {
+    console.log('🚀 Initializing connection...')
+    
     const stream = await startMedia()
-    if (!stream || !sendSignal) { isNegotiating.current = false; return }
-    const pc = createPC()
-    stream.getTracks().forEach(t => pc.addTrack(t, stream))
-    try {
-      const offer = await pc.createOffer()
-      await pc.setLocalDescription(offer)
-      console.log('📤 Sending offer...')
-      sendSignal('webrtc_offer', { sdp: pc.localDescription?.toJSON() })
-    } catch (err) { console.error('❌ Error:', err); isNegotiating.current = false }
-  }, [createPC, startMedia, sendSignal])
-
-  const handleOffer = useCallback(async (sdp: RTCSessionDescriptionInit) => {
-    console.log('📥 Received offer...')
-    let stream = localStreamRef.current || await startMedia()
-    if (!stream || !sendSignal) return
-    const pc = createPC()
-    stream.getTracks().forEach(t => pc.addTrack(t, stream!))
-    try {
-      await pc.setRemoteDescription(new RTCSessionDescription(sdp))
-      while (pendingIceCandidates.current.length > 0) {
-        const c = pendingIceCandidates.current.shift()
-        if (c) await pc.addIceCandidate(new RTCIceCandidate(c))
+    if (!stream) return
+    
+    const pc = createPeerConnection()
+    
+    // Adicionar tracks
+    stream.getTracks().forEach(track => {
+      console.log('➕ Adding track:', track.kind)
+      pc.addTrack(track, stream)
+    })
+    
+    // Processar ICE candidates pendentes
+    while (pendingCandidates.current.length > 0) {
+      const candidate = pendingCandidates.current.shift()
+      if (candidate) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate))
+        } catch { /* ignore */ }
       }
+    }
+    
+    // Timeout de conexão
+    connectionTimeout.current = setTimeout(() => {
+      if (pcRef.current?.connectionState !== 'connected') {
+        console.log('⏰ Connection timeout')
+        attemptReconnect()
+      }
+    }, 20000)
+  }, [startMedia, createPeerConnection, attemptReconnect])
+
+  // Perfect Negotiation: Handle Offer
+  const handleOffer = useCallback(async (sdp: RTCSessionDescriptionInit) => {
+    const pc = pcRef.current
+    if (!pc) {
+      console.log('⚠️ No PC for offer, initializing...')
+      await initializeConnection()
+      // Tentar novamente após inicialização
+      setTimeout(() => handleOffer(sdp), 500)
+      return
+    }
+    
+    try {
+      const offerCollision = makingOffer.current || pc.signalingState !== 'stable'
+      ignoreOffer.current = !isPolite() && offerCollision
+      
+      if (ignoreOffer.current) {
+        console.log('⚠️ Ignoring offer (collision, impolite)')
+        return
+      }
+      
+      console.log('📥 Processing offer...')
+      await pc.setRemoteDescription(new RTCSessionDescription(sdp))
+      
+      // Processar ICE candidates pendentes
+      while (pendingCandidates.current.length > 0) {
+        const candidate = pendingCandidates.current.shift()
+        if (candidate) await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {})
+      }
+      
       const answer = await pc.createAnswer()
       await pc.setLocalDescription(answer)
-      console.log('📤 Sending answer...')
-      sendSignal('webrtc_answer', { sdp: pc.localDescription?.toJSON() })
-    } catch (err) { console.error('❌ Error:', err) }
-  }, [createPC, startMedia, sendSignal])
+      console.log('📤 Sending answer')
+      sendSignal?.('webrtc_answer', { sdp: pc.localDescription?.toJSON() })
+    } catch (err) {
+      console.error('❌ Handle offer error:', err)
+    }
+  }, [isPolite, sendSignal, initializeConnection])
 
+  // Perfect Negotiation: Handle Answer
   const handleAnswer = useCallback(async (sdp: RTCSessionDescriptionInit) => {
-    console.log('📥 Received answer')
     const pc = pcRef.current
-    if (!pc || pc.signalingState !== 'have-local-offer') return
+    if (!pc) return
+    
     try {
-      await pc.setRemoteDescription(new RTCSessionDescription(sdp))
-      while (pendingIceCandidates.current.length > 0) {
-        const c = pendingIceCandidates.current.shift()
-        if (c) await pc.addIceCandidate(new RTCIceCandidate(c))
+      if (pc.signalingState === 'stable') {
+        console.log('⚠️ Ignoring answer (already stable)')
+        return
       }
-    } catch (err) { console.error('❌ Error:', err) }
+      
+      console.log('📥 Processing answer...')
+      isSettingRemoteAnswer.current = true
+      await pc.setRemoteDescription(new RTCSessionDescription(sdp))
+      isSettingRemoteAnswer.current = false
+      
+      // Processar ICE candidates pendentes
+      while (pendingCandidates.current.length > 0) {
+        const candidate = pendingCandidates.current.shift()
+        if (candidate) await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {})
+      }
+    } catch (err) {
+      console.error('❌ Handle answer error:', err)
+      isSettingRemoteAnswer.current = false
+    }
   }, [])
 
+  // Handle ICE Candidate
   const handleIce = useCallback(async (candidate: RTCIceCandidateInit) => {
     const pc = pcRef.current
-    if (!pc || !pc.remoteDescription) { pendingIceCandidates.current.push(candidate); return }
-    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)) } catch (e) { /* ignore */ }
+    if (!pc || !pc.remoteDescription) {
+      console.log('🧊 Queuing ICE candidate')
+      pendingCandidates.current.push(candidate)
+      return
+    }
+    
+    try {
+      console.log('🧊 Adding ICE candidate')
+      await pc.addIceCandidate(new RTCIceCandidate(candidate))
+    } catch (err) {
+      if (!ignoreOffer.current) {
+        console.error('❌ ICE candidate error:', err)
+      }
+    }
   }, [])
 
+
+  // Encerrar chamada
   const endCall = useCallback(() => {
     console.log('📴 Ending call')
     stopQualityMonitor()
-    pcRef.current?.close(); pcRef.current = null
-    pendingIceCandidates.current = []; isNegotiating.current = false; reconnectAttempts.current = 0
-    stopMedia(); setRemoteConnected(false); setConnectionState('new'); setQuality('disconnected')
+    if (connectionTimeout.current) {
+      clearTimeout(connectionTimeout.current)
+      connectionTimeout.current = null
+    }
+    pcRef.current?.close()
+    pcRef.current = null
+    pendingCandidates.current = []
+    makingOffer.current = false
+    ignoreOffer.current = false
+    isSettingRemoteAnswer.current = false
+    reconnectAttempts.current = 0
+    stopMedia()
+    setRemoteConnected(false)
+    setConnectionState('new')
+    setQuality('disconnected')
+    setError(null)
+    setIsReconnecting(false)
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null
   }, [stopMedia, stopQualityMonitor])
 
-  const toggleCamera = () => { const t = localStreamRef.current?.getVideoTracks()[0]; if (t) { t.enabled = !t.enabled; setCameraOn(t.enabled) } }
-  const toggleMic = () => { const t = localStreamRef.current?.getAudioTracks()[0]; if (t) { t.enabled = !t.enabled; setMicOn(t.enabled) } }
+  // Toggle camera/mic
+  const toggleCamera = useCallback(() => {
+    const track = localStreamRef.current?.getVideoTracks()[0]
+    if (track) {
+      track.enabled = !track.enabled
+      setCameraOn(track.enabled)
+    }
+  }, [])
 
-  useEffect(() => { (window as any).__webrtc = { handleOffer, handleAnswer, handleIce, startCall } }, [handleOffer, handleAnswer, handleIce, startCall])
+  const toggleMic = useCallback(() => {
+    const track = localStreamRef.current?.getAudioTracks()[0]
+    if (track) {
+      track.enabled = !track.enabled
+      setMicOn(track.enabled)
+    }
+  }, [])
 
+  // Expor handlers globalmente
+  useEffect(() => {
+    (window as any).__webrtc = { handleOffer, handleAnswer, handleIce }
+    return () => { delete (window as any).__webrtc }
+  }, [handleOffer, handleAnswer, handleIce])
+
+  // Iniciar quando conectado
   useEffect(() => {
     if (status === 'connected') {
-      const isInitiator = (window as any).__isWebRTCInitiator
-      pendingIceCandidates.current = []; isNegotiating.current = false; reconnectAttempts.current = 0
-      if (isInitiator) { setTimeout(() => { if (!pcRef.current || pcRef.current.connectionState === 'closed') startCall() }, 2000) }
-      else { startMedia() }
-    } else if (status === 'idle' || status === 'searching') { endCall() }
-  }, [status, startCall, startMedia, endCall])
+      console.log('🎯 Status connected, role:', (window as any).__isWebRTCInitiator ? 'INITIATOR' : 'RESPONDER')
+      pendingCandidates.current = []
+      reconnectAttempts.current = 0
+      initializeConnection()
+    } else if (status === 'idle' || status === 'searching') {
+      endCall()
+    }
+  }, [status, initializeConnection, endCall])
 
+  // Cleanup
   useEffect(() => () => endCall(), [endCall])
 
+  // Auto-hide controls
   useEffect(() => {
     if (status !== 'connected') return
-    const timer = setTimeout(() => setShowControls(false), 3000)
+    const timer = setTimeout(() => setShowControls(false), 4000)
     return () => clearTimeout(timer)
   }, [status, showControls])
 
@@ -299,7 +459,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   }
 
   const qualityColor = { excellent: 'bg-green-500', good: 'bg-yellow-500', poor: 'bg-orange-500', disconnected: 'bg-red-500' }
-  const qualityText = { excellent: 'Excelente', good: 'Boa', poor: 'Fraca', disconnected: 'Desconectado' }
+  const qualityText = { excellent: 'Excelente', good: 'Boa', poor: 'Fraca', disconnected: 'Conectando...' }
 
   return (
     <div className="h-full w-full relative overflow-hidden" style={bgStyle}
@@ -339,21 +499,23 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
         </div>
       )}
 
+
       {/* Connected */}
       {status === 'connected' && (
         <div className="h-full w-full relative">
-          {/* Indicador de qualidade */}
+          {/* Quality indicator */}
           <div className="absolute top-3 right-3 z-20 flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm">
-            <span className={`w-2 h-2 rounded-full ${qualityColor[quality]} animate-pulse`} />
+            <span className={`w-2 h-2 rounded-full ${qualityColor[quality]} ${quality !== 'disconnected' ? '' : 'animate-pulse'}`} />
             <span className="text-white text-xs">{qualityText[quality]}</span>
           </div>
 
-          {/* Reconectando overlay */}
+          {/* Reconnecting overlay */}
           {isReconnecting && (
             <div className="absolute inset-0 z-30 bg-black/70 flex items-center justify-center">
               <div className="text-center">
                 <div className="w-12 h-12 border-4 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin mx-auto mb-3" />
                 <p className="text-white">Reconectando...</p>
+                <p className="text-white/60 text-sm mt-1">Tentativa {reconnectAttempts.current}/3</p>
               </div>
             </div>
           )}
@@ -370,7 +532,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
                         <span className="text-2xl font-bold text-white">{partnerInfo?.anonymousId?.slice(0, 2)}</span>
                       </div>
                       <p className="text-white font-medium">{partnerInfo?.anonymousId}</p>
-                      <p className="text-gray-400 text-xs mt-1">{connectionState === 'connecting' ? 'Conectando...' : 'Aguardando'}</p>
+                      <p className="text-gray-400 text-xs mt-1">{connectionState === 'connecting' ? 'Conectando vídeo...' : 'Aguardando...'}</p>
                     </div>
                   </div>
                 )}
@@ -391,7 +553,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
             </div>
           )}
 
-          {/* Default */}
+          {/* Default - PiP */}
           {viewMode === 'default' && (
             <>
               <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
@@ -431,6 +593,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
             </>
           )}
 
+
           {/* Controls */}
           <div className={`absolute inset-x-0 bottom-0 transition-all duration-300 ${showControls ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
             <div className="bg-gradient-to-t from-black/80 via-black/40 to-transparent pt-16 pb-4 md:pb-6 px-4">
@@ -447,18 +610,18 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
                       : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728L5.636 5.636" />}
                   </svg>
                 </button>
-                <button onClick={cycleViewMode} className="p-3 md:p-4 rounded-full bg-white/20 hover:bg-white/30 text-white transition-all shadow-lg backdrop-blur-sm">
+                <button onClick={cycleViewMode} className="p-3 md:p-4 rounded-full bg-white/20 hover:bg-white/30 text-white transition-all shadow-lg backdrop-blur-sm" title="Mudar layout">
                   <svg className="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
                   </svg>
                 </button>
-                <button onClick={onNext} className="px-5 md:px-6 py-3 md:py-4 bg-blue-500 hover:bg-blue-600 text-white rounded-full font-semibold text-sm md:text-base transition-all shadow-lg flex items-center gap-2">
+                <button onClick={onNext} className="px-5 md:px-6 py-3 md:py-4 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white rounded-full font-semibold text-sm md:text-base transition-all shadow-lg flex items-center gap-2">
                   <span>Próximo</span>
                   <svg className="w-4 h-4 md:w-5 md:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
                   </svg>
                 </button>
-                <button onClick={onLeave} className="p-3 md:p-4 rounded-full bg-red-500 hover:bg-red-600 text-white transition-all shadow-lg">
+                <button onClick={onLeave} className="p-3 md:p-4 rounded-full bg-red-500 hover:bg-red-600 text-white transition-all shadow-lg" title="Sair">
                   <svg className="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
@@ -467,9 +630,11 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
             </div>
           </div>
 
+          {/* Error message */}
           {error && (
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-xl z-40">
-              {error}
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-xl z-40 text-center">
+              <p>{error}</p>
+              <button onClick={() => setError(null)} className="mt-2 text-sm underline">Fechar</button>
             </div>
           )}
         </div>
