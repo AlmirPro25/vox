@@ -11,9 +11,10 @@ const ICE_SERVERS = [
 interface VideoStageProps {
   onNext?: () => void
   onLeave?: () => void
+  sendSignal?: (type: string, payload: any) => void
 }
 
-export function VideoStage({ onNext, onLeave }: VideoStageProps) {
+export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   const { status, partnerInfo } = useNexusStore()
   const { theme } = useTheme()
   
@@ -21,7 +22,6 @@ export function VideoStage({ onNext, onLeave }: VideoStageProps) {
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
-  const wsRef = useRef<WebSocket | null>(null)
   
   const [cameraOn, setCameraOn] = useState(false)
   const [micOn, setMicOn] = useState(false)
@@ -31,26 +31,8 @@ export function VideoStage({ onNext, onLeave }: VideoStageProps) {
 
   const bgStyle = { background: theme === 'dark' ? 'linear-gradient(135deg, #0a0a0a 0%, #111 100%)' : 'linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%)' }
 
-  // Conectar ao WebSocket dedicado pra WebRTC
-  const connectWS = useCallback(() => {
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'wss://vox-api-hq2l.onrender.com'
-    const ws = new WebSocket(wsUrl)
-    wsRef.current = ws
-    
-    ws.onopen = () => console.log('🎥 WebRTC WS connected')
-    ws.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data)
-        if (msg.type === 'webrtc_offer') handleOffer(msg.payload.sdp)
-        if (msg.type === 'webrtc_answer') handleAnswer(msg.payload.sdp)
-        if (msg.type === 'webrtc_ice' && msg.payload.candidate) handleIce(msg.payload.candidate)
-      } catch {}
-    }
-    return ws
-  }, [])
-
   // Iniciar mídia local
-  const startMedia = async () => {
+  const startMedia = useCallback(async () => {
     try {
       console.log('📹 Requesting camera/mic...')
       const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -72,15 +54,15 @@ export function VideoStage({ onNext, onLeave }: VideoStageProps) {
       setError(err.name === 'NotAllowedError' ? 'Permita acesso à câmera e microfone' : 'Câmera não disponível')
       return null
     }
-  }
+  }, [])
 
-  const stopMedia = () => {
+  const stopMedia = useCallback(() => {
     localStreamRef.current?.getTracks().forEach(t => t.stop())
     localStreamRef.current = null
     if (localVideoRef.current) localVideoRef.current.srcObject = null
     setCameraOn(false)
     setMicOn(false)
-  }
+  }, [])
 
   // Criar peer connection
   const createPC = useCallback(() => {
@@ -88,17 +70,17 @@ export function VideoStage({ onNext, onLeave }: VideoStageProps) {
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
     
     pc.onicecandidate = (e) => {
-      if (e.candidate && wsRef.current?.readyState === WebSocket.OPEN) {
+      if (e.candidate && sendSignal) {
         console.log('🧊 Sending ICE candidate')
-        wsRef.current.send(JSON.stringify({ type: 'webrtc_ice', payload: { candidate: e.candidate } }))
+        sendSignal('webrtc_ice', { candidate: e.candidate })
       }
     }
     
     pc.ontrack = (e) => {
-      console.log('📺 Received remote track!')
+      console.log('📺 Received remote track!', e.streams)
       if (remoteVideoRef.current && e.streams[0]) {
         remoteVideoRef.current.srcObject = e.streams[0]
-        remoteVideoRef.current.play().catch(() => {})
+        remoteVideoRef.current.play().catch(console.error)
         setRemoteConnected(true)
       }
     }
@@ -110,23 +92,16 @@ export function VideoStage({ onNext, onLeave }: VideoStageProps) {
       if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') setRemoteConnected(false)
     }
 
-    pc.oniceconnectionstatechange = () => {
-      console.log('🧊 ICE state:', pc.iceConnectionState)
-    }
+    pc.oniceconnectionstatechange = () => console.log('🧊 ICE state:', pc.iceConnectionState)
     
     return pc
-  }, [])
+  }, [sendSignal])
 
   // Iniciar chamada (initiator)
   const startCall = useCallback(async () => {
     console.log('📞 Starting call as initiator...')
     const stream = await startMedia()
-    if (!stream) return
-    
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      connectWS()
-      await new Promise(r => setTimeout(r, 1000))
-    }
+    if (!stream || !sendSignal) return
     
     const pc = createPC()
     pcRef.current = pc
@@ -138,30 +113,34 @@ export function VideoStage({ onNext, onLeave }: VideoStageProps) {
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
     console.log('📤 Sending offer...')
-    wsRef.current?.send(JSON.stringify({ type: 'webrtc_offer', payload: { sdp: offer } }))
-  }, [createPC, connectWS])
+    sendSignal('webrtc_offer', { sdp: offer })
+  }, [createPC, startMedia, sendSignal])
 
-  // Receber offer
+  // Receber offer (responder)
   const handleOffer = useCallback(async (sdp: RTCSessionDescriptionInit) => {
-    console.log('📥 Received offer, answering...')
-    const stream = localStreamRef.current || await startMedia()
-    if (!stream) return
+    console.log('📥 Received offer, creating answer...')
+    let stream = localStreamRef.current
+    if (!stream) stream = await startMedia()
+    if (!stream || !sendSignal) return
+    
+    // Fechar PC anterior se existir
+    pcRef.current?.close()
     
     const pc = createPC()
     pcRef.current = pc
-    stream.getTracks().forEach(t => pc.addTrack(t, stream))
+    stream.getTracks().forEach(t => pc.addTrack(t, stream!))
     
     await pc.setRemoteDescription(new RTCSessionDescription(sdp))
     const answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
     console.log('📤 Sending answer...')
-    wsRef.current?.send(JSON.stringify({ type: 'webrtc_answer', payload: { sdp: answer } }))
-  }, [createPC])
+    sendSignal('webrtc_answer', { sdp: answer })
+  }, [createPC, startMedia, sendSignal])
 
   // Receber answer
   const handleAnswer = useCallback(async (sdp: RTCSessionDescriptionInit) => {
     console.log('📥 Received answer')
-    if (pcRef.current && pcRef.current.signalingState !== 'stable') {
+    if (pcRef.current && pcRef.current.signalingState === 'have-local-offer') {
       await pcRef.current.setRemoteDescription(new RTCSessionDescription(sdp))
     }
   }, [])
@@ -184,7 +163,7 @@ export function VideoStage({ onNext, onLeave }: VideoStageProps) {
     stopMedia()
     setRemoteConnected(false)
     setConnectionState('new')
-  }, [])
+  }, [stopMedia])
 
   // Toggle câmera/mic
   const toggleCamera = () => {
@@ -196,26 +175,24 @@ export function VideoStage({ onNext, onLeave }: VideoStageProps) {
     if (track) { track.enabled = !track.enabled; setMicOn(track.enabled) }
   }
 
-  // Efeito: conectar WS e iniciar chamada quando status muda pra connected
+  // Expor handlers globalmente pra o index.tsx chamar
+  useEffect(() => {
+    (window as any).__webrtc = { handleOffer, handleAnswer, handleIce, startCall }
+  }, [handleOffer, handleAnswer, handleIce, startCall])
+
+  // Iniciar chamada quando status muda pra connected
   useEffect(() => {
     if (status === 'connected') {
-      console.log('🎯 Status connected, starting WebRTC...')
-      connectWS()
-      // Pequeno delay pra garantir que o WS conectou
-      const timer = setTimeout(() => startCall(), 1500)
+      console.log('🎯 Status connected, will start WebRTC in 1s...')
+      const timer = setTimeout(() => startCall(), 1000)
       return () => clearTimeout(timer)
     } else {
       endCall()
     }
-  }, [status])
+  }, [status, startCall, endCall])
 
   // Cleanup
-  useEffect(() => {
-    return () => {
-      endCall()
-      wsRef.current?.close()
-    }
-  }, [])
+  useEffect(() => () => endCall(), [endCall])
 
   return (
     <div className="h-full w-full relative overflow-hidden" style={bgStyle}>
@@ -259,9 +236,8 @@ export function VideoStage({ onNext, onLeave }: VideoStageProps) {
                     <span className="text-2xl font-bold text-white">{partnerInfo?.anonymousId?.slice(0, 2)}</span>
                   </div>
                   <p className="text-white font-medium">{partnerInfo?.anonymousId}</p>
-                  <p className="text-gray-400 text-sm mt-1">
-                    {connectionState === 'connecting' ? 'Connecting...' : 'Waiting for video...'}
-                  </p>
+                  <p className="text-gray-400 text-sm mt-1">Aguardando video...</p>
+                  <p className="text-gray-500 text-xs mt-2">{connectionState}</p>
                 </div>
               </div>
             )}
@@ -275,59 +251,36 @@ export function VideoStage({ onNext, onLeave }: VideoStageProps) {
             {/* Botões Next e Stop */}
             <div className="absolute top-3 right-3 flex gap-2">
               <button onClick={onNext} className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-full text-sm font-medium shadow-lg transition-colors flex items-center gap-2">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-                </svg>
-                Next
+                Próximo
               </button>
               <button onClick={onLeave} className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-full text-sm font-medium shadow-lg transition-colors">
-                Stop
+                Parar
               </button>
             </div>
           </div>
 
           {/* Video local (pequeno) + Controles */}
           <div className="absolute bottom-4 left-4 flex items-end gap-3">
-            {/* Mini video local */}
             <div className="w-32 h-24 md:w-40 md:h-30 rounded-xl overflow-hidden border-2 border-white/20 shadow-xl bg-gray-900">
               <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" style={{ transform: 'scaleX(-1)' }} />
-              {!cameraOn && (
-                <div className="absolute inset-0 flex items-center justify-center bg-gray-800">
-                  <svg className="w-8 h-8 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728L5.636 5.636" />
-                  </svg>
-                </div>
-              )}
             </div>
-            
-            {/* Controles */}
             <div className="flex gap-2">
-              <button onClick={toggleMic} className={`p-3 rounded-full ${micOn ? 'bg-gray-700 hover:bg-gray-600' : 'bg-red-500 hover:bg-red-600'} text-white shadow-lg transition-colors`}>
+              <button onClick={toggleMic} className={`p-3 rounded-full ${micOn ? 'bg-gray-700' : 'bg-red-500'} text-white shadow-lg`}>
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  {micOn ? (
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                  ) : (
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                  )}
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={micOn ? "M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" : "M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"} />
                 </svg>
               </button>
-              <button onClick={toggleCamera} className={`p-3 rounded-full ${cameraOn ? 'bg-gray-700 hover:bg-gray-600' : 'bg-red-500 hover:bg-red-600'} text-white shadow-lg transition-colors`}>
+              <button onClick={toggleCamera} className={`p-3 rounded-full ${cameraOn ? 'bg-gray-700' : 'bg-red-500'} text-white shadow-lg`}>
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  {cameraOn ? (
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  ) : (
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728L5.636 5.636" />
-                  )}
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={cameraOn ? "M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" : "M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728L5.636 5.636"} />
                 </svg>
               </button>
             </div>
           </div>
 
-          {/* Erro */}
           {error && (
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-xl">
-              <p>{error}</p>
-              <button onClick={startCall} className="mt-2 text-sm underline">Tentar novamente</button>
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-red-500/90 text-white px-6 py-3 rounded-xl">
+              {error}
             </div>
           )}
         </div>

@@ -82,6 +82,22 @@ export function useWebSocket() {
             resetSession()
             playDisconnect()
             break
+          // WebRTC signals - forward to VideoStage
+          case 'webrtc_offer':
+            if ((window as any).__webrtc?.handleOffer) {
+              (window as any).__webrtc.handleOffer(payload.sdp)
+            }
+            break
+          case 'webrtc_answer':
+            if ((window as any).__webrtc?.handleAnswer) {
+              (window as any).__webrtc.handleAnswer(payload.sdp)
+            }
+            break
+          case 'webrtc_ice':
+            if ((window as any).__webrtc?.handleIce && payload.candidate) {
+              (window as any).__webrtc.handleIce(payload.candidate)
+            }
+            break
         }
 
         handlersRef.current.forEach(handler => handler(type, payload))
@@ -142,6 +158,7 @@ export function useWebSocket() {
   return {
     socket: wsRef.current,
     connect,
+    send,
     joinQueue,
     leaveQueue,
     leaveRoom,

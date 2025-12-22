@@ -65,6 +65,11 @@ export default function NexusApp() {
     }, 500)
   }
 
+  // Função para enviar sinais WebRTC pelo WebSocket principal
+  const sendSignal = (type: string, payload: any) => {
+    wsRef.current.send(type, payload)
+  }
+
   const handleSendMessage = (message: string) => wsRef.current.sendChat(message)
   const handleTyping = () => wsRef.current.sendTyping()
 
@@ -97,7 +102,7 @@ export default function NexusApp() {
       <MobileHeader onLeaveRoom={handleLeaveRoom} onReport={() => setShowReport(true)} />
 
       <Column width="flex-1" className={`relative border-x theme-border ${mobileTab !== 'main' ? 'hidden md:block' : ''}`}>
-        <VideoStage onNext={handleNext} onLeave={handleLeaveRoom} />
+        <VideoStage onNext={handleNext} onLeave={handleLeaveRoom} sendSignal={sendSignal} />
         
         {status === 'idle' && (
           <div className="absolute inset-0 z-20 flex items-center justify-center p-4">
