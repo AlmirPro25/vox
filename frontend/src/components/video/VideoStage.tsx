@@ -267,7 +267,8 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
 
   // Inicializar conexão
   const initializeConnection = useCallback(async () => {
-    console.log('🚀 Initializing connection...')
+    const isInitiator = (window as any).__isWebRTCInitiator
+    console.log('🚀 Initializing connection... (initiator:', isInitiator, ')')
     
     const stream = await startMedia()
     if (!stream) return
@@ -290,6 +291,27 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
       }
     }
     
+    // INITIATOR: criar offer explicitamente após um delay
+    // (fallback caso onnegotiationneeded não dispare)
+    if (isInitiator) {
+      setTimeout(async () => {
+        if (pc.signalingState === 'stable' && !makingOffer.current) {
+          try {
+            console.log('📤 INITIATOR: Creating offer explicitly...')
+            makingOffer.current = true
+            const offer = await pc.createOffer()
+            await pc.setLocalDescription(offer)
+            console.log('📤 Sending offer')
+            sendSignal?.('webrtc_offer', { sdp: pc.localDescription?.toJSON() })
+          } catch (err) {
+            console.error('❌ Create offer error:', err)
+          } finally {
+            makingOffer.current = false
+          }
+        }
+      }, 1000)
+    }
+    
     // Timeout de conexão
     connectionTimeout.current = setTimeout(() => {
       if (pcRef.current?.connectionState !== 'connected') {
@@ -297,7 +319,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
         attemptReconnect()
       }
     }, 20000)
-  }, [startMedia, createPeerConnection, attemptReconnect])
+  }, [startMedia, createPeerConnection, attemptReconnect, sendSignal])
 
   // Perfect Negotiation: Handle Offer
   const handleOffer = useCallback(async (sdp: RTCSessionDescriptionInit) => {
