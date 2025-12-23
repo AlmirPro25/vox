@@ -203,9 +203,35 @@ app.get('/stats', (req, res) => {
   });
 });
 
-// TURN credentials - preparado para tokens dinâmicos
+// TURN credentials - com suporte a credenciais temporárias HMAC
 app.get('/turn-credentials', (req, res) => {
-  // FUTURO: Gerar tokens HMAC temporários aqui
+  const TURN_SECRET = process.env.TURN_SECRET;
+  const TURN_URLS = process.env.TURN_URLS; // ex: "turn:turn.seudominio.com:3478,turns:turn.seudominio.com:5349"
+  
+  // Se tem TURN próprio configurado, gera credencial temporária
+  if (TURN_SECRET && TURN_URLS) {
+    const crypto = require('crypto');
+    const ttl = 300; // 5 minutos
+    const timestamp = Math.floor(Date.now() / 1000) + ttl;
+    const username = `${timestamp}`;
+    
+    const hmac = crypto
+      .createHmac('sha1', TURN_SECRET)
+      .update(username)
+      .digest('base64');
+    
+    const urls = TURN_URLS.split(',').map(u => u.trim());
+    
+    console.log(`🔐 Generated TURN credentials (expires in ${ttl}s)`);
+    
+    return res.json([{
+      urls,
+      username,
+      credential: hmac
+    }]);
+  }
+  
+  // Fallback: TURN público (para desenvolvimento)
   const turnServers = [
     { 
       urls: ['turn:a.relay.metered.ca:80', 'turn:a.relay.metered.ca:443'], 

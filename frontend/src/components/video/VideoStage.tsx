@@ -89,7 +89,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   const bgStyle = { background: theme === 'dark' ? '#0a0a0a' : '#f1f5f9' }
 
   // ============================================================================
-  // QUALITY MONITOR
+  // QUALITY MONITOR + RELAY DETECTION
   // ============================================================================
   const startQualityMonitor = useCallback(() => {
     if (statsInterval.current) clearInterval(statsInterval.current)
@@ -101,6 +101,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
       try {
         const stats = await pc.getStats()
         let packetsLost = 0, packetsReceived = 0, rtt = 0
+        let connectionType = 'unknown'
         
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         stats.forEach((report: any) => {
@@ -111,7 +112,17 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
           if (report.type === 'candidate-pair' && report.state === 'succeeded') {
             rtt = report.currentRoundTripTime || 0
           }
+          // Detectar tipo de conexão (host/srflx/relay)
+          if (report.type === 'local-candidate' && report.isRemote === false) {
+            connectionType = report.candidateType || connectionType
+          }
         })
+        
+        // Log tipo de conexão (importante para métricas)
+        // relay = TURN, srflx = STUN, host = direto
+        if (connectionType !== 'unknown') {
+          console.log(`📡 Connection type: ${connectionType}`)
+        }
         
         const lossRate = packetsReceived > 0 ? packetsLost / packetsReceived : 0
         if (lossRate < 0.01 && rtt < 0.15) setQuality('excellent')
