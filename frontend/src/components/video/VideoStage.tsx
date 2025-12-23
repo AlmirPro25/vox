@@ -234,6 +234,8 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
       if (!isInitiatorRef.current) return
       // Só negocia em estado stable
       if (pc.signalingState !== 'stable') return
+      // EDGE 2: Evita offer duplicada se já está fazendo
+      if (makingOffer.current) return
       
       try {
         makingOffer.current = true
@@ -365,6 +367,9 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   // HANDLE OFFER - Perfect Negotiation (polite cede)
   // ============================================================================
   const handleOffer = useCallback(async (sdp: RTCSessionDescriptionInit) => {
+    // EDGE 1: Ignorar se call não está ativa (mensagem atrasada)
+    if (!callActive.current) return
+    
     const pc = pcRef.current
     if (!pc) return
 
@@ -406,6 +411,9 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   // HANDLE ANSWER
   // ============================================================================
   const handleAnswer = useCallback(async (sdp: RTCSessionDescriptionInit) => {
+    // EDGE 1: Ignorar se call não está ativa
+    if (!callActive.current) return
+    
     const pc = pcRef.current
     if (!pc) return
 
@@ -431,6 +439,9 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   // HANDLE ICE
   // ============================================================================
   const handleIce = useCallback(async (candidate: RTCIceCandidateInit) => {
+    // EDGE 1: Ignorar se call não está ativa
+    if (!callActive.current) return
+    
     const pc = pcRef.current
     if (!pc || !pc.remoteDescription) {
       pendingCandidates.current.push(candidate)

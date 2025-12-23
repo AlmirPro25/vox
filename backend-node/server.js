@@ -4,6 +4,18 @@ const WebSocket = require('ws');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 
+// ============================================================================
+// VOX-BRIDGE SIGNALING SERVER v2.0 - PRODUCTION READY
+// ============================================================================
+// MELHORIAS:
+// 1. Garbage collection de peers mortos
+// 2. Timeout de negociação WebRTC (15s)
+// 3. Validação de mensagens WebRTC
+// 4. Room expiration (30 min)
+// 5. Heartbeat obrigatório
+// 6. Métricas de ICE failure
+// ============================================================================
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -15,17 +27,39 @@ const wss = new WebSocket.Server({ server });
 const users = new Map();
 const queue = [];
 const rooms = new Map();
-const rateLimits = new Map(); // Rate limiting por IP/user
+const rateLimits = new Map();
 
-// Rate limiting config
-const RATE_LIMITS = {
-  chat_message: { max: 10, window: 5000 },    // 10 msgs por 5 segundos
-  join_queue: { max: 5, window: 10000 },       // 5 joins por 10 segundos
-  typing: { max: 20, window: 5000 },           // 20 typing events por 5 segundos
-  webrtc_ice: { max: 50, window: 5000 },       // 50 ICE candidates por 5 segundos
+// Configurações
+const CONFIG = {
+  HEARTBEAT_INTERVAL: 30000,      // 30s - intervalo de ping
+  HEARTBEAT_TIMEOUT: 45000,       // 45s - timeout sem pong
+  ROOM_TIMEOUT: 30 * 60 * 1000,   // 30 min - room expira
+  NEGOTIATION_TIMEOUT: 15000,     // 15s - timeout de negociação
+  QUEUE_TIMEOUT: 120000,          // 2 min - timeout na fila
 };
 
-// Verificar rate limit
+// Rate limiting
+const RATE_LIMITS = {
+  chat_message: { max: 10, window: 5000 },
+  join_queue: { max: 5, window: 10000 },
+  typing: { max: 20, window: 5000 },
+  webrtc_ice: { max: 100, window: 10000 },
+  webrtc_offer: { max: 5, window: 10000 },
+  webrtc_answer: { max: 5, window: 10000 },
+};
+
+// Métricas
+const metrics = {
+  totalConnections: 0,
+  totalMatches: 0,
+  iceFailures: 0,
+  negotiationTimeouts: 0,
+};
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+
 function checkRateLimit(userId, action) {
   const key = `${userId}:${action}`;
   const limit = RATE_LIMITS[action];
@@ -41,22 +75,9 @@ function checkRateLimit(userId, action) {
   }
   
   record.count++;
-  if (record.count > limit.max) {
-    console.log(`⚠️ Rate limit exceeded: ${key}`);
-    return false;
-  }
-  return true;
+  return record.count <= limit.max;
 }
 
-// Limpar rate limits antigos periodicamente
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, record] of rateLimits.entries()) {
-    if (now - record.start > 60000) rateLimits.delete(key);
-  }
-}, 30000);
-
-// Gerar ID anônimo
 function generateAnonId() {
   const adjectives = ['Swift', 'Bright', 'Cool', 'Wild', 'Calm', 'Bold', 'Wise', 'Free', 'Quick', 'Sharp'];
   const nouns = ['Fox', 'Wolf', 'Bear', 'Eagle', 'Lion', 'Tiger', 'Hawk', 'Owl', 'Panda', 'Falcon'];
@@ -66,13 +87,96 @@ function generateAnonId() {
   return `${adj}${noun}${num}`;
 }
 
-// Sanitizar texto (prevenir XSS básico)
 function sanitizeText(text) {
   if (typeof text !== 'string') return '';
-  return text.slice(0, 1000).replace(/[<>]/g, ''); // Max 1000 chars, remove < >
+  return text.slice(0, 1000).replace(/[<>]/g, '');
 }
 
-// Health check
+// Validar payload WebRTC
+function isValidWebRTCPayload(type, payload) {
+  if (!payload) return false;
+  
+  if (type === 'webrtc_offer' || type === 'webrtc_answer') {
+    return payload.sdp && typeof payload.sdp === 'object' && payload.sdp.type && payload.sdp.sdp;
+  }
+  
+  if (type === 'webrtc_ice') {
+    return payload.candidate && typeof payload.candidate === 'object';
+  }
+  
+  return true;
+}
+
+// Enviar mensagem segura
+function safeSend(ws, type, payload) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    try {
+      ws.send(JSON.stringify({ type, payload }));
+      return true;
+    } catch (e) {
+      console.error('Send error:', e.message);
+    }
+  }
+  return false;
+}
+
+// ============================================================================
+// GARBAGE COLLECTION - Limpar recursos órfãos
+// ============================================================================
+
+// Limpar rate limits antigos
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, record] of rateLimits.entries()) {
+    if (now - record.start > 60000) rateLimits.delete(key);
+  }
+}, 30000);
+
+// Limpar rooms expiradas
+setInterval(() => {
+  const now = Date.now();
+  for (const [roomId, room] of rooms.entries()) {
+    if (now - room.createdAt > CONFIG.ROOM_TIMEOUT) {
+      console.log(`🗑️ Room expired: ${roomId}`);
+      room.users.forEach(u => {
+        if (u) {
+          safeSend(u.ws, 'room_expired', {});
+          u.roomId = null;
+        }
+      });
+      rooms.delete(roomId);
+    }
+  }
+}, 60000);
+
+// Limpar usuários na fila há muito tempo
+setInterval(() => {
+  const now = Date.now();
+  for (let i = queue.length - 1; i >= 0; i--) {
+    const user = queue[i];
+    if (now - (user.queueJoinTime || now) > CONFIG.QUEUE_TIMEOUT) {
+      console.log(`🗑️ Queue timeout: ${user.anonymousId}`);
+      queue.splice(i, 1);
+      safeSend(user.ws, 'queue_timeout', {});
+    }
+  }
+}, 30000);
+
+// Verificar heartbeat de todos os usuários
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, user] of users.entries()) {
+    if (now - user.lastPong > CONFIG.HEARTBEAT_TIMEOUT) {
+      console.log(`💀 Heartbeat timeout: ${user.anonymousId}`);
+      user.ws.terminate();
+    }
+  }
+}, CONFIG.HEARTBEAT_INTERVAL);
+
+// ============================================================================
+// HTTP ENDPOINTS
+// ============================================================================
+
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'healthy', 
@@ -80,48 +184,47 @@ app.get('/health', (req, res) => {
     users: users.size, 
     queue: queue.length,
     rooms: rooms.size,
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    metrics
   });
 });
 
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'VOX-BRIDGE API v1.1', online: users.size });
+  res.json({ status: 'ok', message: 'VOX-BRIDGE API v2.0', online: users.size });
 });
 
-// Stats endpoint
 app.get('/stats', (req, res) => {
   res.json({
     online: users.size,
     inQueue: queue.length,
     activeRooms: rooms.size,
-    uptime: Math.floor(process.uptime())
+    uptime: Math.floor(process.uptime()),
+    metrics
   });
 });
 
-// TURN credentials endpoint - preparado para tokens dinâmicos
-app.get('/turn-credentials', async (req, res) => {
-  try {
-    // FUTURO: Gerar tokens temporários aqui (JWT ou HMAC)
-    // Por enquanto, retorna servidores públicos
-    const turnServers = [
-      { 
-        urls: ['turn:a.relay.metered.ca:80', 'turn:a.relay.metered.ca:443'], 
-        username: 'e8dd65c92f6f1f2d5c67c7a3', 
-        credential: 'kW3QfUZKpLqYhDzS' 
-      },
-      { 
-        urls: 'turn:openrelay.metered.ca:443?transport=tcp', 
-        username: 'openrelayproject', 
-        credential: 'openrelayproject' 
-      },
-    ];
-    res.json(turnServers);
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to get TURN credentials' });
-  }
+// TURN credentials - preparado para tokens dinâmicos
+app.get('/turn-credentials', (req, res) => {
+  // FUTURO: Gerar tokens HMAC temporários aqui
+  const turnServers = [
+    { 
+      urls: ['turn:a.relay.metered.ca:80', 'turn:a.relay.metered.ca:443'], 
+      username: 'e8dd65c92f6f1f2d5c67c7a3', 
+      credential: 'kW3QfUZKpLqYhDzS' 
+    },
+    { 
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp', 
+      username: 'openrelayproject', 
+      credential: 'openrelayproject' 
+    },
+  ];
+  res.json(turnServers);
 });
 
-// WebSocket handling
+// ============================================================================
+// WEBSOCKET HANDLING
+// ============================================================================
+
 wss.on('connection', (ws, req) => {
   const id = uuidv4();
   const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress || 'unknown';
@@ -136,96 +239,173 @@ wss.on('connection', (ws, req) => {
     interests: [], 
     country: 'BR', 
     roomId: null,
-    connectedAt: Date.now()
+    connectedAt: Date.now(),
+    lastPong: Date.now(),
+    negotiationStarted: null, // Timestamp de início da negociação
   };
+  
   users.set(id, user);
+  metrics.totalConnections++;
 
-  console.log(`👤 User connected: ${user.anonymousId} (${users.size} online)`);
-  ws.send(JSON.stringify({ type: 'connected', payload: { userId: id, anonymousId: user.anonymousId, online: users.size } }));
+  console.log(`👤 Connected: ${user.anonymousId} (${users.size} online)`);
+  safeSend(ws, 'connected', { userId: id, anonymousId: user.anonymousId, online: users.size });
 
   ws.on('message', (data) => {
     try {
       const msg = JSON.parse(data);
       
-      // Rate limiting para ações específicas
+      // Rate limiting
       if (RATE_LIMITS[msg.type] && !checkRateLimit(id, msg.type)) {
-        return; // Ignorar se excedeu rate limit
+        return;
       }
       
       handleMessage(user, msg);
     } catch (e) { 
-      console.error('Parse error:', e); 
+      console.error('Parse error:', e.message); 
     }
   });
 
   ws.on('close', () => {
-    console.log(`👤 User disconnected: ${user.anonymousId} (${users.size - 1} online)`);
+    console.log(`👤 Disconnected: ${user.anonymousId} (${users.size - 1} online)`);
     handleDisconnect(user);
     users.delete(id);
   });
 
   ws.on('error', (err) => {
-    console.error('WebSocket error:', err.message);
+    console.error('WS error:', err.message);
+  });
+  
+  // Ping periódico do servidor
+  ws.on('pong', () => {
+    user.lastPong = Date.now();
   });
 });
 
+// Ping todos os clientes periodicamente
+setInterval(() => {
+  wss.clients.forEach(ws => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.ping();
+    }
+  });
+}, CONFIG.HEARTBEAT_INTERVAL);
+
+// ============================================================================
+// MESSAGE HANDLERS
+// ============================================================================
+
 function handleMessage(user, msg) {
+  // Atualizar lastPong em qualquer mensagem
+  user.lastPong = Date.now();
+  
   switch (msg.type) {
     case 'ping': 
-      user.ws.send(JSON.stringify({ type: 'pong', payload: { online: users.size, queue: queue.length } }));
+      safeSend(user.ws, 'pong', { online: users.size, queue: queue.length });
       break;
-    case 'join_queue': joinQueue(user, msg.payload); break;
-    case 'leave_queue': leaveQueue(user); break;
-    case 'chat_message': sendChatMessage(user, msg.payload); break;
-    case 'typing': sendTyping(user, msg.payload); break;
-    case 'leave_room': leaveRoom(user); break;
-    case 'webrtc_offer': forwardToPartner(user, 'webrtc_offer', msg.payload); break;
-    case 'webrtc_answer': forwardToPartner(user, 'webrtc_answer', msg.payload); break;
-    case 'webrtc_ice': forwardToPartner(user, 'webrtc_ice', msg.payload); break;
+    case 'join_queue': 
+      joinQueue(user, msg.payload); 
+      break;
+    case 'leave_queue': 
+      leaveQueue(user); 
+      break;
+    case 'chat_message': 
+      sendChatMessage(user, msg.payload); 
+      break;
+    case 'typing': 
+      sendTyping(user, msg.payload); 
+      break;
+    case 'leave_room': 
+      leaveRoom(user); 
+      break;
+    case 'webrtc_offer': 
+    case 'webrtc_answer': 
+    case 'webrtc_ice': 
+      forwardWebRTC(user, msg.type, msg.payload); 
+      break;
+    case 'ice_failure':
+      // Métrica de falha ICE
+      metrics.iceFailures++;
+      console.log(`❄️ ICE failure reported by ${user.anonymousId}`);
+      break;
   }
 }
 
-function forwardToPartner(user, type, payload) {
+function forwardWebRTC(user, type, payload) {
   if (!user.roomId) return;
+  
+  // Validar payload
+  if (!isValidWebRTCPayload(type, payload)) {
+    console.log(`⚠️ Invalid ${type} payload from ${user.anonymousId}`);
+    return;
+  }
+  
   const room = rooms.get(user.roomId);
   if (!room) return;
-  const partner = room.find(u => u.id !== user.id);
-  if (partner && partner.ws.readyState === WebSocket.OPEN) {
-    partner.ws.send(JSON.stringify({ type, payload }));
+  
+  const partner = room.users.find(u => u.id !== user.id);
+  if (!partner) return;
+  
+  // Verificar se parceiro ainda está conectado
+  if (partner.ws.readyState !== WebSocket.OPEN) {
+    console.log(`⚠️ Partner disconnected, cleaning room`);
+    leaveRoom(user);
+    return;
   }
+  
+  // Timeout de negociação (só para offer)
+  if (type === 'webrtc_offer') {
+    user.negotiationStarted = Date.now();
+    
+    // Timeout de 15s para receber answer
+    setTimeout(() => {
+      if (user.negotiationStarted && Date.now() - user.negotiationStarted > CONFIG.NEGOTIATION_TIMEOUT) {
+        console.log(`⏰ Negotiation timeout for ${user.anonymousId}`);
+        metrics.negotiationTimeouts++;
+        safeSend(user.ws, 'negotiation_timeout', {});
+        user.negotiationStarted = null;
+      }
+    }, CONFIG.NEGOTIATION_TIMEOUT);
+  }
+  
+  // Limpar timeout ao receber answer
+  if (type === 'webrtc_answer') {
+    const initiator = room.users.find(u => u.id !== user.id);
+    if (initiator) initiator.negotiationStarted = null;
+  }
+  
+  safeSend(partner.ws, type, payload);
 }
 
+// ============================================================================
+// QUEUE & ROOM MANAGEMENT
+// ============================================================================
+
 function joinQueue(user, payload) {
-  // Não pode entrar na fila se já está em uma sala
   if (user.roomId) return;
   
   if (payload) {
     user.nativeLanguage = sanitizeText(payload.nativeLanguage) || 'pt';
     user.targetLanguage = sanitizeText(payload.targetLanguage) || 'en';
-    user.interests = Array.isArray(payload.interests) ? payload.interests.slice(0, 10).map(i => sanitizeText(i)) : [];
+    user.interests = Array.isArray(payload.interests) ? payload.interests.slice(0, 10).map(sanitizeText) : [];
     user.country = sanitizeText(payload.country) || 'BR';
   }
   
-  // Procurar match com compatibilidade de idioma
+  // Procurar match
   const matchIdx = queue.findIndex(q => {
     if (q.id === user.id) return false;
+    if (q.ws.readyState !== WebSocket.OPEN) return false; // Skip dead connections
     
     // Match perfeito: idiomas complementares
-    const perfectMatch = (
-      user.targetLanguage === q.nativeLanguage && 
-      q.targetLanguage === user.nativeLanguage
-    );
-    if (perfectMatch) return true;
+    if (user.targetLanguage === q.nativeLanguage && q.targetLanguage === user.nativeLanguage) {
+      return true;
+    }
     
     // Match bom: mesmo idioma alvo
-    const sameTarget = user.targetLanguage === q.targetLanguage;
-    if (sameTarget) return true;
+    if (user.targetLanguage === q.targetLanguage) return true;
     
-    // Fallback após 30 segundos
+    // Fallback após 30s
     const waitTime = Date.now() - (q.queueJoinTime || Date.now());
-    if (waitTime > 30000) return true;
-    
-    return false;
+    return waitTime > 30000;
   });
   
   if (matchIdx >= 0) {
@@ -235,7 +415,7 @@ function joinQueue(user, payload) {
     if (!queue.find(q => q.id === user.id)) {
       user.queueJoinTime = Date.now();
       queue.push(user);
-      user.ws.send(JSON.stringify({ type: 'queue_joined', payload: { position: queue.length } }));
+      safeSend(user.ws, 'queue_joined', { position: queue.length });
     }
   }
 }
@@ -244,7 +424,7 @@ function leaveQueue(user) {
   const idx = queue.findIndex(q => q.id === user.id);
   if (idx >= 0) {
     queue.splice(idx, 1);
-    user.ws.send(JSON.stringify({ type: 'queue_left', payload: {} }));
+    safeSend(user.ws, 'queue_left', {});
   }
 }
 
@@ -252,35 +432,42 @@ function createRoom(user1, user2) {
   const roomId = uuidv4();
   user1.roomId = roomId;
   user2.roomId = roomId;
-  rooms.set(roomId, [user1, user2]);
+  
+  const room = {
+    id: roomId,
+    users: [user1, user2],
+    createdAt: Date.now(),
+  };
+  rooms.set(roomId, room);
+  metrics.totalMatches++;
 
   const common = user1.interests.filter(i => user2.interests.includes(i));
   
-  // IMPORTANTE: Definir quem é initiator (impolite) e quem é responder (polite)
-  // user1 = quem estava na fila (initiator/impolite)
-  // user2 = quem acabou de entrar (responder/polite)
+  // user1 = initiator (impolite), user2 = responder (polite)
   const info1 = { 
     odId: user2.anonymousId, 
-    odUserId: user2.id, // ID para comparação no frontend
     nativeLanguage: user2.nativeLanguage, 
     country: user2.country, 
     commonInterests: common,
-    isInitiator: true // user1 é o initiator
+    isInitiator: true
   };
   const info2 = { 
     odId: user1.anonymousId, 
-    odUserId: user1.id,
     nativeLanguage: user1.nativeLanguage, 
     country: user1.country, 
     commonInterests: common,
-    isInitiator: false // user2 é o responder
+    isInitiator: false
   };
   
-  console.log(`🎯 Match: ${user1.anonymousId} (initiator) <-> ${user2.anonymousId} (responder)`);
+  console.log(`🎯 Match #${metrics.totalMatches}: ${user1.anonymousId} <-> ${user2.anonymousId}`);
   
-  user1.ws.send(JSON.stringify({ type: 'matched', payload: { roomId, partner: info1 } }));
-  user2.ws.send(JSON.stringify({ type: 'matched', payload: { roomId, partner: info2 } }));
+  safeSend(user1.ws, 'matched', { roomId, partner: info1 });
+  safeSend(user2.ws, 'matched', { roomId, partner: info2 });
 }
+
+// ============================================================================
+// CHAT & ROOM FUNCTIONS
+// ============================================================================
 
 function sendChatMessage(user, payload) {
   if (!user.roomId || !payload?.text) return;
@@ -290,12 +477,13 @@ function sendChatMessage(user, payload) {
   const text = sanitizeText(payload.text);
   if (!text) return;
   
-  const partner = room.find(u => u.id !== user.id);
-  if (partner && partner.ws.readyState === WebSocket.OPEN) {
-    partner.ws.send(JSON.stringify({ 
-      type: 'chat_message', 
-      payload: { from: user.anonymousId, text, timestamp: Date.now() } 
-    }));
+  const partner = room.users.find(u => u.id !== user.id);
+  if (partner) {
+    safeSend(partner.ws, 'chat_message', { 
+      from: user.anonymousId, 
+      text, 
+      timestamp: Date.now() 
+    });
   }
 }
 
@@ -304,9 +492,9 @@ function sendTyping(user, payload) {
   const room = rooms.get(user.roomId);
   if (!room) return;
   
-  const partner = room.find(u => u.id !== user.id);
-  if (partner && partner.ws.readyState === WebSocket.OPEN) {
-    partner.ws.send(JSON.stringify({ type: 'typing', payload: { isTyping: !!payload?.isTyping } }));
+  const partner = room.users.find(u => u.id !== user.id);
+  if (partner) {
+    safeSend(partner.ws, 'typing', { isTyping: !!payload?.isTyping });
   }
 }
 
@@ -314,14 +502,15 @@ function leaveRoom(user) {
   if (!user.roomId) return;
   const room = rooms.get(user.roomId);
   if (room) {
-    const partner = room.find(u => u.id !== user.id);
-    if (partner && partner.ws.readyState === WebSocket.OPEN) {
-      partner.ws.send(JSON.stringify({ type: 'partner_left', payload: {} }));
+    const partner = room.users.find(u => u.id !== user.id);
+    if (partner) {
+      safeSend(partner.ws, 'partner_left', {});
       partner.roomId = null;
     }
     rooms.delete(user.roomId);
   }
   user.roomId = null;
+  user.negotiationStarted = null;
 }
 
 function handleDisconnect(user) {
@@ -329,12 +518,28 @@ function handleDisconnect(user) {
   leaveRoom(user);
 }
 
-// Graceful shutdown
+// ============================================================================
+// GRACEFUL SHUTDOWN
+// ============================================================================
+
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, closing server...');
   wss.clients.forEach(ws => ws.close());
   server.close(() => process.exit(0));
 });
 
+process.on('SIGINT', () => {
+  console.log('SIGINT received, closing server...');
+  wss.clients.forEach(ws => ws.close());
+  server.close(() => process.exit(0));
+});
+
+// ============================================================================
+// START SERVER
+// ============================================================================
+
 const PORT = process.env.PORT || 8080;
-server.listen(PORT, () => console.log(`🚀 VOX-BRIDGE API v1.1 running on port ${PORT}`));
+server.listen(PORT, () => {
+  console.log(`🚀 VOX-BRIDGE API v2.0 running on port ${PORT}`);
+  console.log(`📊 Config: heartbeat=${CONFIG.HEARTBEAT_INTERVAL}ms, roomTimeout=${CONFIG.ROOM_TIMEOUT}ms`);
+});
