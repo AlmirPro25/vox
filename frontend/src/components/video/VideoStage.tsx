@@ -100,13 +100,14 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
         const stats = await pc.getStats()
         let packetsLost = 0, packetsReceived = 0, rtt = 0
         
-        stats.forEach((report: RTCStatsReport) => {
-          if (report.type === 'inbound-rtp' && (report as RTCInboundRtpStreamStats).kind === 'video') {
-            packetsLost = (report as RTCInboundRtpStreamStats).packetsLost || 0
-            packetsReceived = (report as RTCInboundRtpStreamStats).packetsReceived || 0
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        stats.forEach((report: any) => {
+          if (report.type === 'inbound-rtp' && report.kind === 'video') {
+            packetsLost = report.packetsLost || 0
+            packetsReceived = report.packetsReceived || 0
           }
-          if (report.type === 'candidate-pair' && (report as RTCIceCandidatePairStats).state === 'succeeded') {
-            rtt = (report as RTCIceCandidatePairStats).currentRoundTripTime || 0
+          if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+            rtt = report.currentRoundTripTime || 0
           }
         })
         
@@ -164,7 +165,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   }, [])
 
   const stopMedia = useCallback(() => {
-    localStreamRef.current?.getTracks().forEach(t => t.stop())
+    localStreamRef.current?.getTracks().forEach((t: MediaStreamTrack) => t.stop())
     localStreamRef.current = null
     if (localVideoRef.current) localVideoRef.current.srcObject = null
   }, [])
@@ -291,8 +292,8 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
 
     // CORREÇÃO 5: Não duplicar tracks
     const senders = pc.getSenders()
-    stream.getTracks().forEach(track => {
-      if (!senders.find(s => s.track === track)) {
+    stream.getTracks().forEach((track: MediaStreamTrack) => {
+      if (!senders.find((s: RTCRtpSender) => s.track === track)) {
         console.log('➕ Adding track:', track.kind)
         pc.addTrack(track, stream)
       }
