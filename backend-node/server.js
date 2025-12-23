@@ -247,10 +247,27 @@ function createRoom(user1, user2) {
 
   const common = user1.interests.filter(i => user2.interests.includes(i));
   
-  const info1 = { odId: user2.anonymousId, nativeLanguage: user2.nativeLanguage, country: user2.country, commonInterests: common };
-  const info2 = { odId: user1.anonymousId, nativeLanguage: user1.nativeLanguage, country: user1.country, commonInterests: common };
+  // IMPORTANTE: Definir quem é initiator (impolite) e quem é responder (polite)
+  // user1 = quem estava na fila (initiator/impolite)
+  // user2 = quem acabou de entrar (responder/polite)
+  const info1 = { 
+    odId: user2.anonymousId, 
+    odUserId: user2.id, // ID para comparação no frontend
+    nativeLanguage: user2.nativeLanguage, 
+    country: user2.country, 
+    commonInterests: common,
+    isInitiator: true // user1 é o initiator
+  };
+  const info2 = { 
+    odId: user1.anonymousId, 
+    odUserId: user1.id,
+    nativeLanguage: user1.nativeLanguage, 
+    country: user1.country, 
+    commonInterests: common,
+    isInitiator: false // user2 é o responder
+  };
   
-  console.log(`🎯 Match: ${user1.anonymousId} <-> ${user2.anonymousId}`);
+  console.log(`🎯 Match: ${user1.anonymousId} (initiator) <-> ${user2.anonymousId} (responder)`);
   
   user1.ws.send(JSON.stringify({ type: 'matched', payload: { roomId, partner: info1 } }));
   user2.ws.send(JSON.stringify({ type: 'matched', payload: { roomId, partner: info2 } }));

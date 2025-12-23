@@ -111,9 +111,9 @@ export function useWebSocket() {
               setStatus('idle')
               break
             case 'matched': {
-              const myId = useNexusStore.getState().user?.id || ''
-              const partnerId = payload.partner?.odId || payload.partner?.anonymousId || ''
-              const isInitiator = myId < partnerId
+              // IMPORTANTE: Backend define quem é initiator (impolite) vs responder (polite)
+              // Isso evita conflitos de negociação WebRTC
+              const isInitiator = payload.partner?.isInitiator === true
               
               setRoom(payload.roomId, {
                 anonymousId: payload.partner?.odId || payload.partner?.anonymousId,
@@ -124,8 +124,9 @@ export function useWebSocket() {
               setStatus('connected')
               playConnect()
               
+              // Definir role para WebRTC - controlado pelo backend
               ;(window as any).__isWebRTCInitiator = isInitiator
-              console.log('🎯 WebRTC role:', isInitiator ? 'INITIATOR' : 'RESPONDER')
+              console.log('🎯 WebRTC role:', isInitiator ? 'INITIATOR (impolite)' : 'RESPONDER (polite)')
               break
             }
             case 'chat_message':
