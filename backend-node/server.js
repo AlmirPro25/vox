@@ -98,13 +98,22 @@ app.get('/stats', (req, res) => {
   });
 });
 
-// TURN credentials endpoint
+// TURN credentials endpoint - preparado para tokens dinâmicos
 app.get('/turn-credentials', async (req, res) => {
   try {
+    // FUTURO: Gerar tokens temporários aqui (JWT ou HMAC)
+    // Por enquanto, retorna servidores públicos
     const turnServers = [
-      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+      { 
+        urls: ['turn:a.relay.metered.ca:80', 'turn:a.relay.metered.ca:443'], 
+        username: 'e8dd65c92f6f1f2d5c67c7a3', 
+        credential: 'kW3QfUZKpLqYhDzS' 
+      },
+      { 
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp', 
+        username: 'openrelayproject', 
+        credential: 'openrelayproject' 
+      },
     ];
     res.json(turnServers);
   } catch (e) {
