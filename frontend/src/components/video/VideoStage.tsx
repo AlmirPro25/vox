@@ -71,6 +71,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   const makingOffer = useRef(false)
   const pendingCandidates = useRef<RTCIceCandidateInit[]>([])
   const isInitiatorRef = useRef(false) // Definido pelo backend
+  const iceRestarting = useRef(false) // Debounce ICE restart
   
   // Controle
   const callActive = useRef(false)
@@ -80,6 +81,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   const [cameraOn, setCameraOn] = useState(true)
   const [micOn, setMicOn] = useState(true)
   const [remoteConnected, setRemoteConnected] = useState(false)
+  const [remoteMuted, setRemoteMuted] = useState(false) // Detectar remote mute
   const [viewMode, setViewMode] = useState<ViewMode>('split')
   const [showControls, setShowControls] = useState(true)
   const [quality, setQuality] = useState<ConnectionQuality>('connecting')
@@ -201,9 +203,20 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
     // ICE errors - IGNORAR (são ruído)
     pc.onicecandidateerror = () => {}
 
-    // Track recebido
-    pc.ontrack = ({ streams }) => {
-      console.log('📺 Remote track received')
+    // Track recebido - com detecção de mute/unmute
+    pc.ontrack = ({ track, streams }) => {
+      console.log('📺 Remote track received:', track.kind)
+      
+      // Detectar remote mute/unmute (UX premium)
+      track.onmute = () => {
+        console.log('🔇 Remote muted:', track.kind)
+        if (track.kind === 'video') setRemoteMuted(true)
+      }
+      track.onunmute = () => {
+        console.log('🔊 Remote unmuted:', track.kind)
+        if (track.kind === 'video') setRemoteMuted(false)
+      }
+      
       if (remoteVideoRef.current && streams[0]) {
         remoteVideoRef.current.srcObject = streams[0]
         remoteVideoRef.current.play().catch(() => {})
@@ -252,10 +265,15 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
           setQuality('poor')
           break
         case 'failed':
-          // ÚNICO LUGAR de ICE restart
-          console.log('🔄 Connection failed → ICE restart')
-          setQuality('connecting')
-          pc.restartIce()
+          // ÚNICO LUGAR de ICE restart - com debounce
+          if (!iceRestarting.current) {
+            iceRestarting.current = true
+            console.log('🔄 Connection failed → ICE restart')
+            setQuality('connecting')
+            pc.restartIce()
+            // Debounce: só permite outro restart após 3s
+            setTimeout(() => { iceRestarting.current = false }, 3000)
+          }
           break
         case 'closed':
           setRemoteConnected(false)
@@ -298,6 +316,22 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
         pc.addTrack(track, stream)
       }
     })
+
+    // Preferir H264 para Safari/iOS (opcional mas recomendado)
+    try {
+      const transceivers = pc.getTransceivers()
+      transceivers.forEach(t => {
+        if (t.sender?.track?.kind === 'video') {
+          const caps = RTCRtpSender.getCapabilities?.('video')
+          if (caps?.codecs) {
+            const h264Codecs = caps.codecs.filter(c => c.mimeType === 'video/H264')
+            if (h264Codecs.length > 0) {
+              t.setCodecPreferences([...h264Codecs, ...caps.codecs.filter(c => c.mimeType !== 'video/H264')])
+            }
+          }
+        }
+      })
+    } catch { /* codec preferences not supported */ }
 
     // Processar ICE pendentes
     while (pendingCandidates.current.length > 0) {
@@ -540,6 +574,18 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
                         <span className="text-2xl font-bold text-white">{partnerInfo?.anonymousId?.slice(0, 2) || '?'}</span>
                       </div>
                       <p className="text-white font-medium">{partnerInfo?.anonymousId || 'Conectando...'}</p>
+                    </div>
+                  </div>
+                )}
+                {remoteMuted && remoteConnected && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/60">
+                    <div className="text-center">
+                      <div className="w-16 h-16 mx-auto mb-2 rounded-full bg-gray-800 flex items-center justify-center">
+                        <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                        </svg>
+                      </div>
+                      <p className="text-gray-400 text-sm">Câmera desligada</p>
                     </div>
                   </div>
                 )}
