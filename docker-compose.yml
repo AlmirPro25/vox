@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  nexus-cache:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  nexus-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: voxuser
+      POSTGRES_PASSWORD: voxpassword
+      POSTGRES_DB: voxbridge
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  nexus-backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment:
+      DATABASE_URL: "host=nexus-db user=voxuser password=voxpassword dbname=voxbridge port=5432 sslmode=disable"
+      REDIS_URL: "nexus-cache:6379"
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      JWT_SECRET: ${JWT_SECRET:-voxbridge-dev-secret-key-32chars}
+    depends_on:
+      - nexus-cache
+      - nexus-db
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./backend:/app/backend
+
+  nexus-frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    environment:
+      NEXT_PUBLIC_API_URL: "http://localhost:8080"
+      NEXT_PUBLIC_LIVEKIT_URL: "ws://localhost:7880"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - nexus-backend
+
+volumes:
+  postgres_data:

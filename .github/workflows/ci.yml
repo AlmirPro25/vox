@@ -1,0 +1,7 @@
+# CI desabilitado temporariamente
+# Para reativar, descomente o conteúdo abaixo
+
+# name: Nexus CI - The Validation Forge
+# on:
+#   push:
+#     branches: [ main, develop ]

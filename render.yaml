@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: vox-api
+    runtime: node
+    plan: free
+    rootDir: backend-node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 8080
+    healthCheckPath: /health
+    autoDeploy: true

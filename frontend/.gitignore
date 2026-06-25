@@ -1,0 +1,13 @@
+.vercel
+.env*.local
+
+.next
+out
+node_modules
+.tools
+android/.gradle
+android/local.properties
+android/app/build
+dist
+
+.vercel

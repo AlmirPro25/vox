@@ -1,0 +1,29 @@
+# Render Blueprint - VOX-BRIDGE Backend
+# Deploy: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: vox-bridge-api
+    runtime: node
+    region: oregon
+    plan: free
+    rootDir: apps/APP-1/backend-node
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 8080
+      # PROST-QS Integration
+      - key: PROSTQS_URL
+        sync: false # Configurar manualmente no dashboard
+      - key: PROSTQS_APP_ID
+        value: 4fb16e2f-f8f0-425d-84f0-2ef3176bba43
+      - key: PROSTQS_APP_KEY
+        sync: false
+      - key: PROSTQS_APP_SECRET
+        sync: false
+      - key: PROSTQS_DEBUG
+        value: "false"

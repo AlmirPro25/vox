@@ -1,0 +1,10 @@
+
+{
+  "name": "vox-bridge-backend",
+  "version": "1.0.0",
+  "description": "Nexus Core High-Performance Backend",
+  "scripts": {
+    "start": "go run src/main.go",
+    "test": "go test ./tests/..."
+  }
+}

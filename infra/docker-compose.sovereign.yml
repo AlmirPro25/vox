@@ -1,0 +1,85 @@
+# ============================================================================
+# VOXGRID SOVEREIGN NODE - Docker Compose
+# ============================================================================
+# Deploy completo em um comando:
+#   TURN_SECRET=xxx REGION=br docker-compose -f docker-compose.sovereign.yml up -d
+# ============================================================================
+
+version: '3.8'
+
+services:
+  # ========================================
+  # COTURN - TURN/STUN Server
+  # ========================================
+  coturn:
+    image: coturn/coturn:latest
+    container_name: voxgrid-coturn
+    restart: unless-stopped
+    network_mode: host  # Necessário para TURN funcionar corretamente
+    volumes:
+      - ./coturn/turnserver.conf:/etc/turnserver.conf:ro
+      - ./certs:/etc/letsencrypt:ro
+      - coturn-logs:/var/log
+    environment:
+      - TURN_SECRET=${TURN_SECRET}
+      - PUBLIC_IP=${PUBLIC_IP:-auto}
+    command: >
+      -c /etc/turnserver.conf
+      --static-auth-secret=${TURN_SECRET}
+      --realm=voxgrid.voxbridge.app
+
+  # ========================================
+  # VOX-BRIDGE API - Signaling Server
+  # ========================================
+  api:
+    build:
+      context: ../../backend-node
+      dockerfile: Dockerfile
+    container_name: voxgrid-api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - NODE_ENV=production
+      - TURN_SECRET=${TURN_SECRET}
+      - TURN_SERVERS=${TURN_SERVERS:-turn-br.voxbridge.app,turn-eu.voxbridge.app,turn-af.voxbridge.app}
+      - REGION=${REGION:-br}
+      - PROSTQS_URL=${PROSTQS_URL:-}
+      - PROSTQS_API_KEY=${PROSTQS_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ========================================
+  # NGINX - Reverse Proxy + SSL
+  # ========================================
+  nginx:
+    image: nginx:alpine
+    container_name: voxgrid-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/letsencrypt:ro
+    depends_on:
+      - api
+
+  # ========================================
+  # CERTBOT - SSL Auto-renewal
+  # ========================================
+  certbot:
+    image: certbot/certbot
+    container_name: voxgrid-certbot
+    volumes:
+      - ./certs:/etc/letsencrypt
+      - ./certbot-webroot:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+volumes:
+  coturn-logs:

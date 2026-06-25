@@ -1,0 +1,43 @@
+
+{
+  "project_name": "VOX-BRIDGE",
+  "codename": "The Global Nexus",
+  "version": "1.0.0",
+  "architect": "Aurelius",
+  "paradigm": "Microservices-oriented Hexagonal Architecture",
+  "core_decisions": {
+    "backend": {
+      "language": "Go 1.23+",
+      "reason": "Performance bruta em concorrência, gerenciamento eficiente de Goroutines para streams de áudio simultâneos.",
+      "pattern": "Hexagonal Architecture (Ports and Adapters) para desacoplamento da lógica de IA da infraestrutura de rede."
+    },
+    "real_time_media": {
+      "provider": "LiveKit",
+      "architecture": "SFU (Selective Forwarding Unit)",
+      "interception": "Audio-Hooking em nível de servidor para processamento via Gemini Multimodal Live API."
+    },
+    "ai_engine": {
+      "model": "gemini-2.0-flash-exp",
+      "protocol": "WebSockets (Multimodal Live API)",
+      "features": ["Audio-to-Audio nativo", "Preservação de tom/emoção", "Neural Moderation"]
+    },
+    "database": {
+      "primary": "PostgreSQL (Persistence/User Data)",
+      "cache_matchmaking": "Redis (Sorted Sets para pareamento por geolocalização e interesses)"
+    },
+    "frontend": {
+      "web": "Next.js 15 (App Router) + Tailwind CSS",
+      "mobile": "Flutter (Paridade de Core Logic)",
+      "layout": "3-Column Trinity Layout"
+    }
+  },
+  "latency_targets": {
+    "network_hop": "< 100ms",
+    "ai_inference": "< 400ms",
+    "total_end_to_end": "< 800ms"
+  },
+  "security": {
+    "encryption": "AES-256-GCM para sinalização",
+    "privacy": "Zero-Knowledge on Private Data"
+  }
+}

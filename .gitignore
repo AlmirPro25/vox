@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+vendor/
+
+# Build outputs
+.next/
+out/
+dist/
+*.exe
+server
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test
+coverage/
+
+# Database (SQLite persistence — use a persistent disk in production)
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Misc
+*.pem
+certbot/
+nul
+.deploy/
+.tools/
