@@ -22,6 +22,12 @@ export interface ChatMessage {
   translatedText: string
   timestamp: Date
   isAiOptimized: boolean
+  media?: {
+    type: 'image' | 'audio' | 'video'
+    mime: string
+    name: string
+    data: string
+  }
 }
 
 interface PartnerInfo {

@@ -537,8 +537,18 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
 
   // Expor handlers
   useEffect(() => {
-    const win = window as unknown as { __webrtc?: { handleOffer: typeof handleOffer; handleAnswer: typeof handleAnswer; handleIce: typeof handleIce } }
+    const win = window as unknown as {
+      __webrtc?: { handleOffer: typeof handleOffer; handleAnswer: typeof handleAnswer; handleIce: typeof handleIce }
+      __pendingWebRTCSignals?: Array<{ type: 'offer' | 'answer' | 'ice'; payload: unknown }>
+    }
     win.__webrtc = { handleOffer, handleAnswer, handleIce }
+    const queued = win.__pendingWebRTCSignals || []
+    win.__pendingWebRTCSignals = []
+    queued.forEach((signal) => {
+      if (signal.type === 'offer') void handleOffer(signal.payload as RTCSessionDescriptionInit)
+      if (signal.type === 'answer') void handleAnswer(signal.payload as RTCSessionDescriptionInit)
+      if (signal.type === 'ice') void handleIce(signal.payload as RTCIceCandidateInit)
+    })
     return () => { delete win.__webrtc }
   }, [handleOffer, handleAnswer, handleIce])
 

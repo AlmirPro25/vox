@@ -5,15 +5,27 @@ import { useSound } from '@/hooks/useSound'
 
 interface Props {
   onSendMessage?: (message: string) => void
+  onSendMedia?: (media: { type: 'image' | 'audio' | 'video'; mime: string; name: string; data: string }) => void
   onTyping?: () => void
 }
 
-export function TranslationPanel({ onSendMessage, onTyping }: Props) {
+const MAX_MEDIA_BYTES = 3 * 1024 * 1024
+
+function getMediaType(mime: string): 'image' | 'audio' | 'video' | null {
+  if (mime.startsWith('image/')) return 'image'
+  if (mime.startsWith('audio/')) return 'audio'
+  if (mime.startsWith('video/')) return 'video'
+  return null
+}
+
+export function TranslationPanel({ onSendMessage, onSendMedia, onTyping }: Props) {
   const { status, messages, partnerInfo, user, partnerTyping, sessionStats } = useNexusStore()
   const { theme } = useTheme()
   const { playMessage } = useSound()
   const [input, setInput] = useState('')
+  const [mediaError, setMediaError] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const prevMessageCount = useRef(messages.length)
 
   useEffect(() => {
@@ -46,6 +58,41 @@ export function TranslationPanel({ onSendMessage, onTyping }: Props) {
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInput(e.target.value)
     if (e.target.value && onTyping) onTyping()
+  }
+
+  const handleMediaSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !onSendMedia) return
+
+    const type = getMediaType(file.type)
+    if (!type) {
+      setMediaError('Formato nao suportado.')
+      return
+    }
+
+    if (file.size > MAX_MEDIA_BYTES) {
+      setMediaError('Arquivo muito grande. Use ate 3 MB.')
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      const data = String(reader.result || '')
+      useNexusStore.getState().addMessage({
+        id: Date.now().toString(),
+        senderId: user?.anonymousId || 'me',
+        originalText: '',
+        translatedText: '',
+        timestamp: new Date(),
+        isAiOptimized: false,
+        media: { type, mime: file.type, name: file.name, data }
+      })
+      onSendMedia({ type, mime: file.type, name: file.name, data })
+      setMediaError('')
+    }
+    reader.onerror = () => setMediaError('Nao foi possivel ler o arquivo.')
+    reader.readAsDataURL(file)
   }
 
   const formatDuration = () => {
@@ -154,7 +201,21 @@ export function TranslationPanel({ onSendMessage, onTyping }: Props) {
                     : `${isDark ? 'bg-[#1a1a1a] text-white border border-white/5' : 'bg-gray-100 text-gray-800'} rounded-bl-none`
                   }
                 `}>
-                  <p>{msg.originalText}</p>
+                  {msg.media && (
+                    <div className={msg.originalText ? 'mb-2' : ''}>
+                      {msg.media.type === 'image' && (
+                        <img src={msg.media.data} alt={msg.media.name} className="max-h-56 rounded-xl object-contain" />
+                      )}
+                      {msg.media.type === 'audio' && (
+                        <audio controls src={msg.media.data} className="max-w-full" />
+                      )}
+                      {msg.media.type === 'video' && (
+                        <video controls playsInline src={msg.media.data} className="max-h-56 rounded-xl" />
+                      )}
+                      <p className="mt-1 max-w-48 truncate text-[10px] opacity-70">{msg.media.name}</p>
+                    </div>
+                  )}
+                  {msg.originalText && <p>{msg.originalText}</p>}
                   {msg.translatedText && msg.translatedText !== msg.originalText && (
                     <div className={`mt-2 pt-2 border-t ${isMe ? 'border-white/20' : 'border-white/5'} text-[13px] italic opacity-90`}>
                       <div className="flex items-center gap-1.5 mb-1">
@@ -199,7 +260,27 @@ export function TranslationPanel({ onSendMessage, onTyping }: Props) {
       {/* Input - fixed at bottom */}
       {status === 'connected' && (
         <div className="shrink-0 p-4 border-t" style={{ borderColor: isDark ? '#222' : '#eee' }}>
+          {mediaError && <p className="mb-2 text-xs text-red-500">{mediaError}</p>}
           <div className="flex items-center gap-2 bg-transparent">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,audio/*,video/*"
+              className="hidden"
+              onChange={handleMediaSelect}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className={`h-[48px] w-[48px] flex shrink-0 items-center justify-center rounded-2xl transition-all active:scale-90 ${
+                isDark ? 'bg-[#161616] text-gray-300 border border-white/5' : 'bg-gray-50 text-gray-600 border border-gray-200'
+              }`}
+              title="Enviar midia"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.586-6.586a4 4 0 00-5.657-5.657L5.757 10.757a6 6 0 108.486 8.486L20 13.486" />
+              </svg>
+            </button>
             <div className="flex-1 relative group">
               <input
                 type="text"

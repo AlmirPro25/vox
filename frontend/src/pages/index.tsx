@@ -69,6 +69,7 @@ export default function NexusApp() {
 
   const sendSignal = (type: string, payload: any) => wsRef.current.send(type, payload)
   const handleSendMessage = (message: string) => wsRef.current.sendChat(message)
+  const handleSendMedia = (media: { type: 'image' | 'audio' | 'video'; mime: string; name: string; data: string }) => wsRef.current.sendMedia(media)
   const handleTyping = () => wsRef.current.sendTyping()
 
   const handleUpdateLanguages = (native: string, target: string) => {
@@ -177,7 +178,7 @@ export default function NexusApp() {
       {/* Right Sidebar - Chat */}
       <div className={`${mobileTab !== 'chat' ? 'hidden md:block' : 'fixed inset-0 z-40 pt-14 pb-16 md:relative md:inset-auto md:pt-0 md:pb-0 md:z-auto'} transition-all duration-300 ${rightSidebarOpen ? 'md:w-80' : 'md:w-0'} md:overflow-hidden`}
         style={{ background: theme === 'dark' ? '#0a0a0a' : '#fff' }}>
-        <TranslationPanel onSendMessage={handleSendMessage} onTyping={handleTyping} />
+        <TranslationPanel onSendMessage={handleSendMessage} onSendMedia={handleSendMedia} onTyping={handleTyping} />
       </div>
 
       {/* Report Modal */}

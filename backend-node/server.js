@@ -41,6 +41,7 @@ const CONFIG = {
 // Rate limiting
 const RATE_LIMITS = {
   chat_message: { max: 10, window: 5000 },
+  media_message: { max: 3, window: 10000 },
   join_queue: { max: 5, window: 10000 },
   typing: { max: 20, window: 5000 },
   webrtc_ice: { max: 100, window: 10000 },
@@ -337,6 +338,9 @@ function handleMessage(user, msg) {
     case 'chat_message': 
       sendChatMessage(user, msg.payload); 
       break;
+    case 'media_message':
+      sendMediaMessage(user, msg.payload);
+      break;
     case 'typing': 
       sendTyping(user, msg.payload); 
       break;
@@ -509,6 +513,33 @@ function sendChatMessage(user, payload) {
       from: user.anonymousId, 
       text, 
       timestamp: Date.now() 
+    });
+  }
+}
+
+function sendMediaMessage(user, payload) {
+  if (!user.roomId || !payload?.media) return;
+  const room = rooms.get(user.roomId);
+  if (!room) return;
+
+  const media = payload.media;
+  const allowedTypes = new Set(['image', 'audio', 'video']);
+  if (!allowedTypes.has(media.type)) return;
+  if (typeof media.data !== 'string' || !media.data.startsWith('data:')) return;
+  if (media.data.length > 4.2 * 1024 * 1024) return;
+
+  const partner = room.users.find(u => u.id !== user.id);
+  if (partner) {
+    safeSend(partner.ws, 'media_message', {
+      from: user.anonymousId,
+      text: sanitizeText(payload.text || ''),
+      media: {
+        type: media.type,
+        mime: sanitizeText(media.mime || ''),
+        name: sanitizeText(media.name || 'media'),
+        data: media.data,
+      },
+      timestamp: Date.now()
     });
   }
 }

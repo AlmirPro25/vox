@@ -12,6 +12,29 @@ import { useSound } from '@/hooks/useSound'
 // ============================================================================
 
 type MessageHandler = (type: string, payload: unknown) => void
+type WebRTCSignal = { type: 'offer' | 'answer' | 'ice'; payload: unknown }
+
+function dispatchWebRTCSignal(signal: WebRTCSignal): void {
+  const win = window as unknown as {
+    __webrtc?: {
+      handleOffer: (sdp: unknown) => void
+      handleAnswer: (sdp: unknown) => void
+      handleIce: (candidate: unknown) => void
+    }
+    __pendingWebRTCSignals?: WebRTCSignal[]
+  }
+
+  if (win.__webrtc) {
+    if (signal.type === 'offer') win.__webrtc.handleOffer(signal.payload)
+    if (signal.type === 'answer') win.__webrtc.handleAnswer(signal.payload)
+    if (signal.type === 'ice') win.__webrtc.handleIce(signal.payload)
+    return
+  }
+
+  const queue = win.__pendingWebRTCSignals || []
+  queue.push(signal)
+  win.__pendingWebRTCSignals = queue.slice(-256)
+}
 
 export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null)
@@ -132,7 +155,10 @@ export function useWebSocket() {
               
             case 'matched': {
               const isInitiator = payload.partner?.isInitiator === true
-              
+              const win = window as unknown as { __isWebRTCInitiator?: boolean }
+              win.__isWebRTCInitiator = isInitiator
+              console.log('WebRTC role:', isInitiator ? 'INITIATOR' : 'RESPONDER')
+
               setRoom(payload.roomId, {
                 anonymousId: payload.partner?.odId || payload.partner?.anonymousId,
                 nativeLanguage: payload.partner?.nativeLanguage,
@@ -141,27 +167,23 @@ export function useWebSocket() {
               })
               setStatus('connected')
               playConnect()
-              
-              const win = window as unknown as { __isWebRTCInitiator?: boolean }
-              win.__isWebRTCInitiator = isInitiator
-              console.log('🎯 WebRTC role:', isInitiator ? 'INITIATOR' : 'RESPONDER')
               break
             }
-            
             case 'chat_message':
+            case 'media_message':
               addMessage({
                 id: Date.now().toString(),
                 senderId: payload.from,
-                originalText: payload.text,
-                translatedText: payload.text,
+                originalText: payload.text || '',
+                translatedText: payload.text || '',
                 timestamp: new Date(payload.timestamp),
-                isAiOptimized: false
+                isAiOptimized: false,
+                media: payload.media
               })
               setPartnerTyping(false)
               playMessage()
               break
-              
-            case 'typing':
+                          case 'typing':
               setPartnerTyping(payload.isTyping)
               break
               
@@ -173,16 +195,16 @@ export function useWebSocket() {
               
             case 'webrtc_offer':
               console.log('📥 Received offer')
-              ;(window as unknown as { __webrtc?: { handleOffer: (sdp: unknown) => void } }).__webrtc?.handleOffer?.(payload.sdp)
+              dispatchWebRTCSignal({ type: 'offer', payload: payload.sdp })
               break
               
             case 'webrtc_answer':
               console.log('📥 Received answer')
-              ;(window as unknown as { __webrtc?: { handleAnswer: (sdp: unknown) => void } }).__webrtc?.handleAnswer?.(payload.sdp)
+              dispatchWebRTCSignal({ type: 'answer', payload: payload.sdp })
               break
               
             case 'webrtc_ice':
-              ;(window as unknown as { __webrtc?: { handleIce: (candidate: unknown) => void } }).__webrtc?.handleIce?.(payload.candidate)
+              dispatchWebRTCSignal({ type: 'ice', payload: payload.candidate })
               break
               
             case 'negotiation_timeout':
@@ -271,6 +293,10 @@ export function useWebSocket() {
     send('chat_message', { text: message })
   }, [send])
 
+  const sendMedia = useCallback((media: { type: 'image' | 'audio' | 'video'; mime: string; name: string; data: string }, text = '') => {
+    send('media_message', { text, media })
+  }, [send])
+
   const sendTyping = useCallback(() => {
     send('typing', { isTyping: true })
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
@@ -313,6 +339,7 @@ export function useWebSocket() {
     leaveQueue,
     leaveRoom,
     sendChat,
+    sendMedia,
     sendTyping,
     updateLanguages,
     updateInterests: updateInterestsWS,
