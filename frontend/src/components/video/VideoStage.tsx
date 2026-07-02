@@ -15,39 +15,55 @@ import { useTheme } from '@/hooks/useTheme'
 // ============================================================================
 
 // TURN será buscado do backend (preparado para tokens dinâmicos)
+const FALLBACK_TURN_SERVERS: RTCIceServer[] = [
+  {
+    urls: [
+      'turn:a.relay.metered.ca:80',
+      'turn:a.relay.metered.ca:443',
+    ],
+    username: 'e8dd65c92f6f1f2d5c67c7a3',
+    credential: 'kW3QfUZKpLqYhDzS',
+  },
+  {
+    urls: [
+      'turn:openrelay.metered.ca:443?transport=tcp',
+      'turn:openrelay.metered.ca:80?transport=tcp',
+      'turn:openrelay.metered.ca:80',
+    ],
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+]
+
+const hasTurnServer = (servers: RTCIceServer[]): boolean =>
+  servers.some((server) => {
+    const urls = Array.isArray(server.urls) ? server.urls : [server.urls]
+    return urls.some((url) => url.startsWith('turn:') || url.startsWith('turns:'))
+  })
+
 const getIceServers = async (): Promise<RTCIceServer[]> => {
   const baseServers: RTCIceServer[] = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
   ]
-  
+
   try {
-    // Tentar buscar TURN do backend (futuro: tokens dinâmicos)
     const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://vox-api-hq2l.onrender.com'}/turn-credentials`)
     if (res.ok) {
-      const turnServers = await res.json()
-      return [...baseServers, ...turnServers]
+      const turnServers = (await res.json()) as RTCIceServer[]
+      if (hasTurnServer(turnServers)) {
+        return [...baseServers, ...turnServers]
+      }
+
+      console.warn('Backend returned STUN only; adding fallback TURN servers')
+      return [...baseServers, ...turnServers, ...FALLBACK_TURN_SERVERS]
     }
   } catch {
-    console.log('⚠️ Using fallback TURN servers')
+    console.log('Using fallback TURN servers')
   }
-  
-  // Fallback - TURN público (temporário)
-  return [
-    ...baseServers,
-    {
-      urls: ['turn:a.relay.metered.ca:80', 'turn:a.relay.metered.ca:443'],
-      username: 'e8dd65c92f6f1f2d5c67c7a3',
-      credential: 'kW3QfUZKpLqYhDzS'
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    },
-  ]
-}
 
+  return [...baseServers, ...FALLBACK_TURN_SERVERS]
+}
 type ViewMode = 'split' | 'pip-remote' | 'pip-local'
 type ConnectionQuality = 'excellent' | 'good' | 'poor' | 'connecting'
 
@@ -81,6 +97,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
   const [cameraOn, setCameraOn] = useState(true)
   const [micOn, setMicOn] = useState(true)
   const [remoteConnected, setRemoteConnected] = useState(false)
+  const [remoteVideoReady, setRemoteVideoReady] = useState(false)
   const [remoteMuted, setRemoteMuted] = useState(false) // Detectar remote mute
   const [viewMode, setViewMode] = useState<ViewMode>('split')
   const [showControls, setShowControls] = useState(true)
@@ -216,26 +233,34 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
 
     // Track recebido - com detecção de mute/unmute
     pc.ontrack = ({ track, streams }) => {
-      console.log('📺 Remote track received:', track.kind)
-      
-      // Detectar remote mute/unmute (UX premium)
+      console.log('Remote track received:', track.kind)
+      setRemoteConnected(true)
+
       track.onmute = () => {
-        console.log('🔇 Remote muted:', track.kind)
-        if (track.kind === 'video') setRemoteMuted(true)
+        console.log('Remote muted:', track.kind)
+        if (track.kind === 'video') {
+          setRemoteMuted(true)
+          setRemoteVideoReady(false)
+        }
       }
       track.onunmute = () => {
-        console.log('🔊 Remote unmuted:', track.kind)
-        if (track.kind === 'video') setRemoteMuted(false)
+        console.log('Remote unmuted:', track.kind)
+        if (track.kind === 'video') {
+          setRemoteMuted(false)
+          setRemoteVideoReady(true)
+        }
       }
-      
+
       if (remoteVideoRef.current && streams[0]) {
         remoteVideoRef.current.srcObject = streams[0]
+        if (track.kind === 'video') {
+          remoteVideoRef.current.onloadeddata = () => setRemoteVideoReady(true)
+          remoteVideoRef.current.onplaying = () => setRemoteVideoReady(true)
+        }
         remoteVideoRef.current.play().catch(() => {})
-        setRemoteConnected(true)
         startQualityMonitor()
       }
     }
-
     // ============================================================================
     // CORREÇÃO 3: onnegotiationneeded SÓ para initiator
     // ============================================================================
@@ -283,13 +308,30 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
             iceRestarting.current = true
             console.log('🔄 Connection failed → ICE restart')
             setQuality('connecting')
-            pc.restartIce()
+            if (isInitiatorRef.current) {
+              void (async () => {
+                try {
+                  makingOffer.current = true
+                  const offer = await pc.createOffer({ iceRestart: true })
+                  await pc.setLocalDescription(offer)
+                  sendSignal?.('webrtc_offer', { sdp: pc.localDescription?.toJSON() })
+                } catch (err) {
+                  console.error('ICE restart offer error:', err)
+                } finally {
+                  makingOffer.current = false
+                }
+              })()
+            } else {
+              pc.restartIce()
+            }
+            sendSignal?.('ice_failure', { reason: 'connection_failed' })
             // Debounce: só permite outro restart após 3s
             setTimeout(() => { iceRestarting.current = false }, 3000)
           }
           break
         case 'closed':
           setRemoteConnected(false)
+          setRemoteVideoReady(false)
           setQuality('connecting')
           break
       }
@@ -317,19 +359,20 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
     console.log('🚀 Init call (initiator:', isInitiatorRef.current, ')')
 
     const stream = await startMedia()
-    if (!stream) return
-
     const pc = await createPeerConnection()
 
-    // CORREÇÃO 5: Não duplicar tracks
     const senders = pc.getSenders()
-    stream.getTracks().forEach((track: MediaStreamTrack) => {
-      if (!senders.find((s: RTCRtpSender) => s.track === track)) {
-        console.log('➕ Adding track:', track.kind)
-        pc.addTrack(track, stream)
-      }
-    })
-
+    if (stream) {
+      stream.getTracks().forEach((track: MediaStreamTrack) => {
+        if (!senders.find((s: RTCRtpSender) => s.track === track)) {
+          console.log('Adding track:', track.kind)
+          pc.addTrack(track, stream)
+        }
+      })
+    } else {
+      pc.addTransceiver('audio', { direction: 'recvonly' })
+      pc.addTransceiver('video', { direction: 'recvonly' })
+    }
     // Preferir H264 para Safari/iOS (opcional mas recomendado)
     try {
       const transceivers = pc.getTransceivers()
@@ -476,6 +519,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
     makingOffer.current = false
     stopMedia()
     setRemoteConnected(false)
+    setRemoteVideoReady(false)
     setQuality('connecting')
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null
   }, [stopMedia, stopQualityMonitor])
@@ -589,13 +633,15 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
             <div className="h-full w-full flex flex-col md:flex-row bg-black">
               <div className="flex-1 relative min-h-[50%] md:min-h-0 border-b md:border-b-0 md:border-r border-white/10">
                 <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
-                {!remoteConnected && (
+                {!remoteVideoReady && (
                   <div className="absolute inset-0 flex items-center justify-center bg-gray-900/90">
                     <div className="text-center">
                       <div className="w-20 h-20 mx-auto mb-3 rounded-full bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center animate-pulse">
                         <span className="text-2xl font-bold text-white">{partnerInfo?.anonymousId?.slice(0, 2) || '?'}</span>
                       </div>
-                      <p className="text-white font-medium">{partnerInfo?.anonymousId || 'Conectando...'}</p>
+                      <p className="text-white font-medium">
+                        {remoteConnected ? 'Aguardando video...' : partnerInfo?.anonymousId || 'Conectando...'}
+                      </p>
                     </div>
                   </div>
                 )}
@@ -630,7 +676,7 @@ export function VideoStage({ onNext, onLeave, sendSignal }: VideoStageProps) {
           {viewMode === 'pip-remote' && (
             <>
               <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
-              {!remoteConnected && (
+              {!remoteVideoReady && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/80">
                   <div className="w-20 h-20 rounded-full bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center">
                     <span className="text-2xl font-bold text-white">{partnerInfo?.anonymousId?.slice(0, 2) || '?'}</span>
