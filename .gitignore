@@ -34,3 +34,16 @@ coverage/
 # Misc
 *.pem
 certbot/
+
+# Large files / build artifacts
+.deploy/
+.tools/
+frontend/.tools/
+frontend/android/
+backend-node/data/
+android/app/build/
+build/
+target/
+
+# OS / Windows
+nul
